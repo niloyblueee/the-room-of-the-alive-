@@ -19,9 +19,459 @@ C_DETAIL = (0.20, 0.20, 0.20)
 C_BODY3  = (0.80, 0.70, 0.90)
 C_CLOTH3 = (0.30, 0.10, 0.30)
 
+ENEMY_FB_OUTER = (0.1, 0.8, 0.2)
+ENEMY_FB_INNER = (1.0, 1.0, 1.0)
+
+class Enemies:
+    def __init__(self, x, y, z):
+        self.x, self.y, self.z = x, y, z
+        self.vx, self.vy, self.vz = 0.0, 0.0, 0.0
+        self.hp = 100.0
+        self.max_hp = 100.0
+        self.angle = 0.0
+        self.last_attack_time = time.time()
+        self.alive = True
+
+    def draw(self):
+        pass
+
+    def update(self, dt):
+        pass
+
+    def spawn_fireball(self, speed):
+        tx, ty, tz = state.player_x, state.player_y, state.player_z
+        dx, dy, dz = tx - self.x, ty - self.y, tz - self.z
+        d = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if d < 0.0001:
+            d = 1.0
+        state.enemy_fireballs.append({
+            'id': random.random() * 100,
+            'x': self.x,
+            'y': self.y + 0.8,
+            'z': self.z,
+            'vx': (dx / d) * speed,
+            'vy': (dy / d) * speed,
+            'vz': (dz / d) * speed,
+        })
+
+    def draw_health_bar(self):
+        if not self.alive:
+            return
+        glPushMatrix()
+        glTranslatef(self.x, self.y + 2.0, self.z)
+        bw, bh = 2.0, 0.2
+        glColor3f(0.8, 0.0, 0.0)
+        glBegin(GL_QUADS)
+        glVertex3f(-bw / 2, -bh / 2, 0)
+        glVertex3f(bw / 2, -bh / 2, 0)
+        glVertex3f(bw / 2, bh / 2, 0)
+        glVertex3f(-bw / 2, bh / 2, 0)
+        glEnd()
+        hr = max(0.0, min(1.0, self.hp / self.max_hp))
+        if hr > 0:
+            cw = bw * hr
+            glColor3f(0.0, 0.8, 0.0)
+            glBegin(GL_QUADS)
+            glVertex3f(-bw / 2, -bh / 2, 0.01)
+            glVertex3f(-bw / 2 + cw, -bh / 2, 0.01)
+            glVertex3f(-bw / 2 + cw, bh / 2, 0.01)
+            glVertex3f(-bw / 2, bh / 2, 0.01)
+            glEnd()
+        glPopMatrix()
+
+class Zombie(Enemies):
+    """Minecraft-style Zombie enemy with blocky proportions and detailed articulation.
+
+    Color guide (from reference):
+        Skin:       (0.35, 0.60, 0.25)
+        Shirt:      (0.20, 0.70, 0.70)
+        Pants:      (0.25, 0.25, 0.70)
+        Shoes:      (0.30, 0.30, 0.30)
+        Eyes/Mouth: (0.05, 0.05, 0.05)
+    """
+    C_SKIN  = (0.35, 0.60, 0.25)
+    C_SHIRT = (0.20, 0.70, 0.70)
+    C_PANTS = (0.25, 0.25, 0.70)
+    C_SHOES = (0.30, 0.30, 0.30)
+    C_EYES  = (0.05, 0.05, 0.05)
+
+    def __init__(self, x, z):
+        super().__init__(x, 0.8, z)
+        self.max_hp = 100.0
+        self.hp = self.max_hp
+        self.walk_t = 0.0
+
+    def update(self, dt):
+        if not self.alive:
+            return
+        self.walk_t += dt
+        dx, dz = state.player_x - self.x, state.player_z - self.z
+        dist = math.sqrt(dx * dx + dz * dz)
+        self.angle = math.degrees(math.atan2(dx, dz)) if dist > 0.01 else self.angle
+        spd = 4.0
+        if dist > 0.01:
+            self.vx = (dx / dist) * spd
+            self.vz = (dz / dist) * spd
+        self.x += self.vx * dt
+        self.z += self.vz * dt
+        self.y = 0.8
+        if time.time() - self.last_attack_time > 2.5:
+            self.spawn_fireball(10.0)
+            self.last_attack_time = time.time()
+
+    # --------------- drawing helpers ---------------
+    def draw_zombie_head(self):
+        """Blocky cube head with face details."""
+        glPushMatrix()
+        glTranslatef(0, 1.55, 0)
+        # main head cube
+        glColor3f(*self.C_SKIN)
+        glPushMatrix(); glScalef(0.70, 0.70, 0.70); dcube(1.0); glPopMatrix()
+        # left eye
+        glColor3f(*self.C_EYES)
+        glPushMatrix(); glTranslatef(-0.15, 0.08, 0.36); glScalef(0.12, 0.10, 0.02); dcube(1.0); glPopMatrix()
+        # right eye
+        glPushMatrix(); glTranslatef(0.15, 0.08, 0.36); glScalef(0.12, 0.10, 0.02); dcube(1.0); glPopMatrix()
+        # mouth
+        glPushMatrix(); glTranslatef(0, -0.15, 0.36); glScalef(0.22, 0.06, 0.02); dcube(1.0); glPopMatrix()
+        # nose bump
+        glColor3f(0.30, 0.52, 0.22)
+        glPushMatrix(); glTranslatef(0, 0.0, 0.36); glScalef(0.08, 0.08, 0.04); dcube(1.0); glPopMatrix()
+        # brow ridges
+        glColor3f(0.28, 0.48, 0.20)
+        glPushMatrix(); glTranslatef(-0.15, 0.18, 0.36); glScalef(0.14, 0.04, 0.02); dcube(1.0); glPopMatrix()
+        glPushMatrix(); glTranslatef(0.15, 0.18, 0.36); glScalef(0.14, 0.04, 0.02); dcube(1.0); glPopMatrix()
+        glPopMatrix()
+
+    def draw_zombie_neck(self):
+        glColor3f(*self.C_SKIN)
+        glPushMatrix(); glTranslatef(0, 1.15, 0); glRotatef(-90, 1, 0, 0); dcyl(0.12, 0.15, 0.12); glPopMatrix()
+
+    def draw_zombie_torso(self):
+        """Shirt (upper) and undershirt detail."""
+        # main shirt body
+        glColor3f(*self.C_SHIRT)
+        glPushMatrix(); glTranslatef(0, 0.45, 0); glScalef(0.90, 0.90, 0.50); dcube(1.0); glPopMatrix()
+        # shirt detail patches (tattered look)
+        glColor3f(0.15, 0.58, 0.58)
+        glPushMatrix(); glTranslatef(-0.20, 0.65, 0.26); glScalef(0.18, 0.14, 0.02); dcube(1.0); glPopMatrix()
+        glPushMatrix(); glTranslatef(0.15, 0.35, 0.26); glScalef(0.22, 0.12, 0.02); dcube(1.0); glPopMatrix()
+        # collar
+        glColor3f(*self.C_SKIN)
+        glPushMatrix(); glTranslatef(0, 0.92, 0); glScalef(0.70, 0.06, 0.40); dcube(1.0); glPopMatrix()
+        # skin patches (ripped shirt)
+        glPushMatrix(); glTranslatef(0.25, 0.55, 0.26); glScalef(0.10, 0.16, 0.02); dcube(1.0); glPopMatrix()
+        glPushMatrix(); glTranslatef(-0.30, 0.30, 0.26); glScalef(0.08, 0.12, 0.02); dcube(1.0); glPopMatrix()
+
+    def draw_zombie_arm(self, side, wa):
+        """Arms extended forward (zombie pose) with walk animation."""
+        glPushMatrix()
+        glTranslatef(side * 0.60, 0.75, 0)
+        glRotatef(-wa * side * 0.5, 1, 0, 0)
+        # shoulder joint
+        glColor3f(*self.C_SHIRT)
+        dsph(0.16)
+        # upper arm (shirt sleeve)
+        glPushMatrix(); glTranslatef(0, -0.05, 0.20)
+        glRotatef(-70, 1, 0, 0)   # arms stretched forward
+        # sleeve
+        glColor3f(*self.C_SHIRT)
+        glPushMatrix(); glScalef(0.22, 0.40, 0.22); dcube(1.0); glPopMatrix()
+        # forearm (skin)
+        glColor3f(*self.C_SKIN)
+        glTranslatef(0, 0, 0.45)
+        # elbow joint
+        dsph(0.12)
+        glPushMatrix(); glScalef(0.20, 0.20, 0.40); dcube(1.0); glPopMatrix()
+        # hand
+        glColor3f(*self.C_SKIN)
+        glTranslatef(0, 0, 0.35)
+        glPushMatrix(); glScalef(0.18, 0.12, 0.12); dcube(1.0); glPopMatrix()
+        # fingers (3 blocky)
+        for f in range(3):
+            glPushMatrix(); glTranslatef(-0.05 + f * 0.05, 0, 0.09); glScalef(0.04, 0.06, 0.08); dcube(1.0); glPopMatrix()
+        glPopMatrix()
+        glPopMatrix()
+
+    def draw_zombie_leg(self, side, wa):
+        """Blocky legs with pants and shoes."""
+        glPushMatrix()
+        glTranslatef(side * 0.22, -0.05, 0)
+        glRotatef(wa * side, 1, 0, 0)
+        # hip joint
+        glColor3f(*self.C_PANTS)
+        dsph(0.15)
+        # upper leg (pants)
+        glPushMatrix(); glRotatef(90, 1, 0, 0); dcyl(0.14, 0.13, 0.55); glPopMatrix()
+        glPushMatrix(); glTranslatef(0, -0.30, 0); glScalef(0.28, 0.60, 0.28); dcube(1.0); glPopMatrix()
+        # knee joint
+        glTranslatef(0, -0.60, 0)
+        dsph(0.13)
+        # lower leg (pants)
+        glPushMatrix(); glTranslatef(0, -0.25, 0); glScalef(0.26, 0.50, 0.26); dcube(1.0); glPopMatrix()
+        # ankle
+        glTranslatef(0, -0.55, 0)
+        # shoe
+        glColor3f(*self.C_SHOES)
+        dsph(0.12)
+        glPushMatrix(); glTranslatef(0, -0.06, 0.05); glScalef(0.26, 0.12, 0.36); dcube(1.0); glPopMatrix()
+        glPopMatrix()
+
+    def draw(self):
+        if not self.alive:
+            return
+        # walk animation
+        sp = self.vx ** 2 + self.vz ** 2
+        wa = 0.0
+        if sp > 0.1:
+            wa = math.sin(self.walk_t * 8.0) * 25.0
+
+        glPushMatrix()
+        glTranslatef(self.x, self.y, self.z)
+        glRotatef(self.angle, 0, 1, 0)
+        glScalef(0.6, 0.6, 0.6)
+
+        self.draw_zombie_leg(-1, wa)
+        self.draw_zombie_leg(1, -wa)
+        self.draw_zombie_torso()
+        self.draw_zombie_arm(-1, wa)
+        self.draw_zombie_arm(1, -wa)
+        self.draw_zombie_neck()
+        self.draw_zombie_head()
+
+        glPopMatrix()
+
+class Batman(Enemies):
+    """Lego-style Batman enemy with detailed blocky armor and cape.
+
+    Color guide (from reference):
+        Cowl/Cape:   (0.05, 0.05, 0.05) near-black
+        Armor:       (0.40, 0.40, 0.45) dark gray
+        Armor Dark:  (0.20, 0.20, 0.22) darker gray panels
+        Belt:        (0.55, 0.45, 0.20) gold/tan
+        Skin:        (0.85, 0.72, 0.55) light skin (chin)
+        Eyes:        (1.00, 1.00, 1.00) white slits
+    """
+    C_COWL   = (0.05, 0.05, 0.05)
+    C_ARMOR  = (0.40, 0.40, 0.45)
+    C_ARMOR_D = (0.20, 0.20, 0.22)
+    C_BELT   = (0.55, 0.45, 0.20)
+    C_SKIN   = (0.85, 0.72, 0.55)
+    C_EYES   = (1.00, 1.00, 1.00)
+    C_CAPE   = (0.06, 0.06, 0.08)
+
+    def __init__(self, x, z):
+        super().__init__(x, 8.0, z)
+        self.max_hp = 100.0
+        self.hp = self.max_hp
+        self.fly_t = random.random() * 6.0
+
+    def update(self, dt):
+        if not self.alive:
+            return
+        self.fly_t += dt
+        radius = 10.0
+        cx, cz = state.player_x, state.player_z
+        self.x = cx + math.sin(self.fly_t * 0.7) * radius
+        self.z = cz + math.cos(self.fly_t * 0.7) * radius
+        self.y = 8.0 + math.sin(self.fly_t * 1.8) * 1.5
+        self.angle = math.degrees(math.atan2(state.player_x - self.x, state.player_z - self.z))
+        if time.time() - self.last_attack_time > 1.5:
+            self.spawn_fireball(13.0)
+            self.last_attack_time = time.time()
+
+    # --------------- drawing helpers ---------------
+    def draw_bat_head(self):
+        """Cowl with bat ears, white eye slits, exposed chin."""
+        glPushMatrix()
+        glTranslatef(0, 1.45, 0)
+        # cowl (main head)
+        glColor3f(*self.C_COWL)
+        glPushMatrix(); glScalef(0.62, 0.65, 0.60); dcube(1.0); glPopMatrix()
+        # bat ears - left
+        glPushMatrix(); glTranslatef(-0.18, 0.42, 0.0)
+        glRotatef(15, 0, 0, 1)
+        dcyl(0.07, 0.0, 0.35, 6)
+        glPopMatrix()
+        # bat ears - right
+        glPushMatrix(); glTranslatef(0.18, 0.42, 0.0)
+        glRotatef(-15, 0, 0, 1)
+        dcyl(0.07, 0.0, 0.35, 6)
+        glPopMatrix()
+        # eye slits - left
+        glColor3f(*self.C_EYES)
+        glPushMatrix(); glTranslatef(-0.12, 0.06, 0.31); glRotatef(12, 0, 0, 1); glScalef(0.12, 0.05, 0.02); dcube(1.0); glPopMatrix()
+        # eye slits - right
+        glPushMatrix(); glTranslatef(0.12, 0.06, 0.31); glRotatef(-12, 0, 0, 1); glScalef(0.12, 0.05, 0.02); dcube(1.0); glPopMatrix()
+        # exposed chin / jaw
+        glColor3f(*self.C_SKIN)
+        glPushMatrix(); glTranslatef(0, -0.22, 0.18); glScalef(0.30, 0.18, 0.25); dcube(1.0); glPopMatrix()
+        # mouth line
+        glColor3f(0.60, 0.45, 0.35)
+        glPushMatrix(); glTranslatef(0, -0.28, 0.31); glScalef(0.16, 0.03, 0.02); dcube(1.0); glPopMatrix()
+        # brow ridge
+        glColor3f(*self.C_COWL)
+        glPushMatrix(); glTranslatef(0, 0.16, 0.31); glScalef(0.36, 0.06, 0.03); dcube(1.0); glPopMatrix()
+        glPopMatrix()
+
+    def draw_bat_neck(self):
+        glColor3f(*self.C_COWL)
+        glPushMatrix(); glTranslatef(0, 1.08, 0); glRotatef(-90, 1, 0, 0); dcyl(0.14, 0.18, 0.14); glPopMatrix()
+
+    def draw_bat_torso(self):
+        """Armored chest with bat emblem."""
+        # main chest armor
+        glColor3f(*self.C_ARMOR)
+        glPushMatrix(); glTranslatef(0, 0.50, 0); glScalef(1.00, 0.85, 0.55); dcube(1.0); glPopMatrix()
+        # chest plate overlay (darker)
+        glColor3f(*self.C_ARMOR_D)
+        glPushMatrix(); glTranslatef(0, 0.55, 0.28); glScalef(0.70, 0.60, 0.04); dcube(1.0); glPopMatrix()
+        # bat emblem (dark on chest)
+        glColor3f(*self.C_COWL)
+        # emblem body (horizontal oval)
+        glPushMatrix(); glTranslatef(0, 0.55, 0.31); glScalef(0.28, 0.10, 0.02); dcube(1.0); glPopMatrix()
+        # emblem wings
+        glPushMatrix(); glTranslatef(-0.18, 0.58, 0.31); glRotatef(20, 0, 0, 1); glScalef(0.14, 0.06, 0.02); dcube(1.0); glPopMatrix()
+        glPushMatrix(); glTranslatef(0.18, 0.58, 0.31); glRotatef(-20, 0, 0, 1); glScalef(0.14, 0.06, 0.02); dcube(1.0); glPopMatrix()
+        # shoulder pads
+        glColor3f(*self.C_ARMOR)
+        glPushMatrix(); glTranslatef(-0.52, 0.82, 0); glScalef(0.18, 0.14, 0.40); dcube(1.0); glPopMatrix()
+        glPushMatrix(); glTranslatef(0.52, 0.82, 0); glScalef(0.18, 0.14, 0.40); dcube(1.0); glPopMatrix()
+        # abs plate
+        glColor3f(*self.C_ARMOR_D)
+        glPushMatrix(); glTranslatef(0, 0.18, 0.28); glScalef(0.50, 0.30, 0.04); dcube(1.0); glPopMatrix()
+        # ab lines
+        glColor3f(0.15, 0.15, 0.17)
+        glPushMatrix(); glTranslatef(0, 0.18, 0.31); glScalef(0.02, 0.28, 0.02); dcube(1.0); glPopMatrix()
+        glPushMatrix(); glTranslatef(0, 0.18, 0.31); glScalef(0.40, 0.02, 0.02); dcube(1.0); glPopMatrix()
+
+    def draw_bat_belt(self):
+        """Utility belt with pouches."""
+        # belt band
+        glColor3f(*self.C_BELT)
+        glPushMatrix(); glTranslatef(0, 0.02, 0); glRotatef(90, 1, 0, 0); dcyl(0.54, 0.54, 0.12, 16); glPopMatrix()
+        # center buckle
+        glColor3f(0.65, 0.55, 0.25)
+        glPushMatrix(); glTranslatef(0, -0.02, 0.55); glScalef(0.14, 0.10, 0.06); dcube(1.0); glPopMatrix()
+        # pouches
+        glColor3f(*self.C_BELT)
+        for i in range(4):
+            ang = -30 + i * 20
+            px = math.sin(math.radians(ang)) * 0.52
+            pz = math.cos(math.radians(ang)) * 0.52
+            glPushMatrix(); glTranslatef(px, -0.02, pz); glScalef(0.10, 0.10, 0.08); dcube(1.0); glPopMatrix()
+
+    def draw_bat_arm(self, side):
+        """Arms with gauntlets and fin blades."""
+        glPushMatrix()
+        glTranslatef(side * 0.62, 0.72, 0)
+        # shoulder sphere
+        glColor3f(*self.C_ARMOR)
+        dsph(0.16)
+        # upper arm
+        glPushMatrix(); glRotatef(90, 1, 0, 0); dcyl(0.12, 0.11, 0.55); glPopMatrix()
+        glColor3f(*self.C_ARMOR_D)
+        glPushMatrix(); glTranslatef(0, -0.28, 0); glScalef(0.24, 0.50, 0.22); dcube(1.0); glPopMatrix()
+        # elbow
+        glTranslatef(0, -0.55, 0)
+        glColor3f(*self.C_ARMOR)
+        dsph(0.12)
+        # forearm (gauntlet)
+        glColor3f(*self.C_COWL)
+        glPushMatrix(); glTranslatef(0, -0.25, 0); glScalef(0.22, 0.46, 0.22); dcube(1.0); glPopMatrix()
+        # gauntlet fin blades (3 blades on forearm)
+        glColor3f(*self.C_COWL)
+        for b in range(3):
+            glPushMatrix()
+            glTranslatef(side * 0.12, -0.12 - b * 0.12, -0.10)
+            glScalef(0.03, 0.08, 0.14)
+            dcube(1.0)
+            glPopMatrix()
+        # hand
+        glTranslatef(0, -0.52, 0)
+        glColor3f(*self.C_COWL)
+        dsph(0.10)
+        glPushMatrix(); glScalef(0.16, 0.10, 0.12); dcube(1.0); glPopMatrix()
+        # fingers
+        for f in range(4):
+            glPushMatrix(); glTranslatef(-0.05 + f * 0.035, -0.12, 0); glScalef(0.03, 0.08, 0.04); dcube(1.0); glPopMatrix()
+        glPopMatrix()
+
+    def draw_bat_leg(self, side):
+        """Armored legs with boots."""
+        glPushMatrix()
+        glTranslatef(side * 0.22, -0.10, 0)
+        # hip
+        glColor3f(*self.C_ARMOR_D)
+        dsph(0.14)
+        # upper leg
+        glPushMatrix(); glRotatef(90, 1, 0, 0); dcyl(0.13, 0.12, 0.50); glPopMatrix()
+        glPushMatrix(); glTranslatef(0, -0.28, 0); glScalef(0.26, 0.52, 0.26); dcube(1.0); glPopMatrix()
+        # knee
+        glTranslatef(0, -0.55, 0)
+        glColor3f(*self.C_ARMOR)
+        dsph(0.13)
+        # knee pad
+        glPushMatrix(); glTranslatef(0, 0, 0.14); glScalef(0.14, 0.10, 0.06); dcube(1.0); glPopMatrix()
+        # lower leg / boot
+        glColor3f(*self.C_COWL)
+        glPushMatrix(); glTranslatef(0, -0.28, 0); glScalef(0.26, 0.52, 0.26); dcube(1.0); glPopMatrix()
+        # boot top rim
+        glColor3f(*self.C_ARMOR_D)
+        glPushMatrix(); glTranslatef(0, -0.05, 0); glScalef(0.28, 0.06, 0.28); dcube(1.0); glPopMatrix()
+        # foot
+        glTranslatef(0, -0.56, 0)
+        glColor3f(*self.C_COWL)
+        dsph(0.11)
+        glPushMatrix(); glTranslatef(0, -0.05, 0.06); glScalef(0.26, 0.10, 0.36); dcube(1.0); glPopMatrix()
+        glPopMatrix()
+
+    def draw_bat_cape(self):
+        """Cape flowing behind, made of flat quads."""
+        glColor3f(*self.C_CAPE)
+        # cape - main panel (back, draping down)
+        cape_sway = math.sin(self.fly_t * 3.0) * 0.15
+        # upper cape attachment
+        glPushMatrix()
+        glTranslatef(0, 0.80, -0.30)
+        # top section
+        glPushMatrix(); glScalef(0.90, 0.30, 0.06); dcube(1.0); glPopMatrix()
+        # mid cape
+        glPushMatrix(); glTranslatef(0, -0.45, -0.10 + cape_sway); glScalef(1.10, 0.60, 0.05); dcube(1.0); glPopMatrix()
+        # lower cape (wider, longer)
+        glPushMatrix(); glTranslatef(0, -1.00, -0.20 + cape_sway * 1.5); glScalef(1.30, 0.70, 0.04); dcube(1.0); glPopMatrix()
+        # cape tips (scalloped bottom - 5 points)
+        for i in range(5):
+            tx = -0.50 + i * 0.25
+            glPushMatrix()
+            glTranslatef(tx, -1.45, -0.25 + cape_sway * 2.0)
+            glRotatef(90, 1, 0, 0)
+            dcyl(0.08, 0.0, 0.20, 4)
+            glPopMatrix()
+        glPopMatrix()
+
+    def draw(self):
+        if not self.alive:
+            return
+        glPushMatrix()
+        glTranslatef(self.x, self.y, self.z)
+        glRotatef(self.angle, 0, 1, 0)
+
+        self.draw_bat_cape()
+        self.draw_bat_leg(-1)
+        self.draw_bat_leg(1)
+        self.draw_bat_torso()
+        self.draw_bat_belt()
+        self.draw_bat_arm(-1)
+        self.draw_bat_arm(1)
+        self.draw_bat_neck()
+        self.draw_bat_head()
+
+        glPopMatrix()
+
 class Mahoraga:
     def __init__(self):
-        self.x, self.y, self.z = 0.0, 3.1, 0.0
+        self.x, self.y, self.z = 0.0, 5.4, 0.0
         self.vx, self.vy, self.vz = 0.0, 0.0, 0.0
         self.hp = 100.0
         self.angle = 0.0
@@ -256,6 +706,7 @@ class Mahoraga:
         glPushMatrix()
         glTranslatef(self.x, self.y, self.z)
         glRotatef(self.angle, 0,1,0)
+        glScalef(1.8, 1.8, 1.8)
 
         p3 = self.phase == 3
         cb = C_BODY3 if p3 else C_BODY
@@ -289,7 +740,7 @@ class Mahoraga:
         if self.phase >= 4:
             return
         glPushMatrix()
-        glTranslatef(self.x, self.y+4.5, self.z)
+        glTranslatef(self.x, self.y+7.5, self.z)
         bw, bh = 4.0, 0.4
         glColor3f(0.8,0.0,0.0)
         glBegin(GL_QUADS)
@@ -344,8 +795,8 @@ class Mahoraga:
             if dist > 0.01:
                 self.vx = (dx/dist)*fs - (dz/dist)*ss
                 self.vz = (dz/dist)*fs + (dx/dist)*ss
-            if self.y <= 3.1:
-                self.y, self.vy = 3.1, 0
+            if self.y <= 5.4:
+                self.y, self.vy = 5.4, 0
                 if random.random() < dt*0.4: self.vy = 12.0
             else:
                 self.vy -= 25.0*dt
@@ -355,7 +806,7 @@ class Mahoraga:
         elif self.phase == 2:
             self.transition_time += dt
             self.hp = min(100.0, self.hp + 25.0*dt)
-            ty = 10.0; self.y += (ty-self.y)*(dt/max(0.1,2.0-self.transition_time))
+            ty = 15.0; self.y += (ty-self.y)*(dt/max(0.1,2.0-self.transition_time))
             for _ in range(3):
                 state.particles.append({'x':self.x+(random.random()-0.5)*6, 'y':self.y-2+random.random()*4,
                                         'z':self.z+(random.random()-0.5)*6, 'vy':2+random.random()*5, 'life':1.0})
@@ -364,7 +815,7 @@ class Mahoraga:
             if self.hp <= 0.0:
                 self.start_death_blast()
                 return
-            ty = 10+math.sin(time.time()*1.5)*3; tx = math.sin(time.time()*1.2)*12
+            ty = 15.0+math.sin(time.time()*1.5)*3; tx = math.sin(time.time()*1.2)*12
             tz = state.player_z-12+math.cos(time.time()*0.9)*12
             self.vx, self.vy, self.vz = (tx-self.x)*1.5, (ty-self.y)*1.5, (tz-self.z)*1.5
             self.x += self.vx*dt; self.y += self.vy*dt; self.z += self.vz*dt
@@ -385,12 +836,23 @@ class GameState:
         self.boss = Mahoraga()
         self.fireballs, self.particles = [], []
         self.player_fireballs = []
+        self.enemy_fireballs = []
+        self.enemies = []
+        for _ in range(4):
+            ex = (random.random() - 0.5) * 60
+            ez = (random.random() - 0.5) * 60
+            self.enemies.append(Zombie(ex, ez))
+        for _ in range(2):
+            ex = (random.random() - 0.5) * 50
+            ez = (random.random() - 0.5) * 50
+            self.enemies.append(Batman(ex, ez))
         self.quadric = None
 
 state = GameState()
 
 def init():
     state.quadric = gluNewQuadric()
+    glClearColor(1.0, 1.0, 1.0, 1.0)
     glEnable(GL_DEPTH_TEST)
 
 def dcube(s):
@@ -431,6 +893,16 @@ def draw_fireballs():
         dsph(0.3, 12, 12)
         glColor3f(0.8, 0.8, 1.0)
         dsph(0.15, 8, 8)
+        glPopMatrix()
+    for fb in state.enemy_fireballs:
+        glPushMatrix()
+        glTranslatef(fb['x'], fb['y'], fb['z'])
+        s = 1.0 + 0.2 * math.sin(time.time() * 12.0 + fb['id'])
+        glScalef(s, s, s)
+        glColor3f(*ENEMY_FB_OUTER)
+        dsph(0.35, 12, 12)
+        glColor3f(*ENEMY_FB_INNER)
+        dsph(0.18, 8, 8)
         glPopMatrix()
 
 def draw_particles():
@@ -512,13 +984,19 @@ def update_player(dt):
 def update(dt):
     update_player(dt)
     state.boss.update(dt)
+    for e in state.enemies:
+        e.update(dt)
     for p in state.particles: p['y'] += p['vy']*dt; p['life'] -= dt
     state.particles = [p for p in state.particles if p['life'] > 0]
     for fb in state.fireballs: fb['x'] += fb['vx']*dt; fb['y'] += fb['vy']*dt; fb['z'] += fb['vz']*dt
     state.fireballs = [fb for fb in state.fireballs if fb['y'] > -5 and abs(fb['x']) < 60 and abs(fb['z']) < 60]
+    for fb in state.enemy_fireballs:
+        fb['x'] += fb['vx'] * dt; fb['y'] += fb['vy'] * dt; fb['z'] += fb['vz'] * dt
+    state.enemy_fireballs = [fb for fb in state.enemy_fireballs if fb['y'] > -5 and abs(fb['x']) < 70 and abs(fb['z']) < 70]
     
     for fb in state.player_fireballs:
         fb['x'] += fb['vx']*dt; fb['y'] += fb['vy']*dt; fb['z'] += fb['vz']*dt
+        hit = False
         # Boss collision
         dist = math.sqrt((fb['x']-state.boss.x)**2 + (fb['y']-state.boss.y)**2 + (fb['z']-state.boss.z)**2)
         if dist < 4.5:
@@ -530,7 +1008,28 @@ def update(dt):
                 if state.boss.hp <= 0:
                     state.boss.start_death_blast()
             fb['y'] = -100 # destroy
+            hit = True
+        if not hit:
+            for e in state.enemies:
+                if not e.alive:
+                    continue
+                dist = math.sqrt((fb['x'] - e.x)**2 + (fb['y'] - e.y)**2 + (fb['z'] - e.z)**2)
+                if dist < 2.0:
+                    e.hp = max(0, e.hp - 50.0)
+                    for _ in range(4):
+                        state.particles.append({
+                            'x': fb['x'] + (random.random() - 0.5) * 1.5,
+                            'y': fb['y'] + (random.random() - 0.5) * 1.5,
+                            'z': fb['z'] + (random.random() - 0.5) * 1.5,
+                            'vy': 2 + random.random() * 4,
+                            'life': 0.4,
+                        })
+                    if e.hp <= 0:
+                        e.alive = False
+                    fb['y'] = -100
+                    break
     state.player_fireballs = [fb for fb in state.player_fireballs if fb['y'] > -5 and abs(fb['x']) < 60 and abs(fb['z']) < 60]
+    state.enemies = [e for e in state.enemies if e.alive]
 
 def display():
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -544,6 +1043,9 @@ def display():
     gluLookAt(state.player_x, state.player_y, state.player_z,
               lx, ly, lz, 0, 1, 0)
     draw_ground(); draw_particles(); draw_fireballs(); state.boss.draw(); state.boss.draw_death_blast(); state.boss.draw_health_bar()
+    for e in state.enemies:
+        e.draw()
+        e.draw_health_bar()
     draw_crosshair(); draw_text()
     glutSwapBuffers()
 
