@@ -10,7 +10,7 @@ from OpenGL.GLUT import *
 W_WIDTH, W_HEIGHT = 800, 600
 
 PLAYER_SPEED = 12.0
-
+ 
 # ---------- colors ----------
 C_BODY   = (0.85, 0.85, 0.85)
 C_CLOTH  = (0.15, 0.15, 0.18)
@@ -27,8 +27,42 @@ class Mahoraga:
         self.angle = 0.0
         self.phase = 1
         self.transition_time = 0.0
+        self.death_time = 0.0
         self.last_attack_time = time.time()
         self.walk_anim_time = 0.0
+
+    def start_death_blast(self):
+        if self.phase >= 4:
+            return
+        self.phase = 4
+        self.death_time = 0.0
+        self.transition_time = 0.0
+        self.vx = self.vy = self.vz = 0.0
+        self.last_attack_time = time.time()
+        for _ in range(50):
+            ang = random.random() * math.pi * 2.0
+            elev = (random.random() - 0.5) * math.pi * 0.7
+            state.particles.append({
+                'x': self.x + math.cos(ang) * math.cos(elev) * 1.5,
+                'y': self.y + 1.0 + math.sin(elev) * 1.5,
+                'z': self.z + math.sin(ang) * math.cos(elev) * 1.5,
+                'vy': 4.0 + random.random() * 7.0,
+                'life': 0.8 + random.random() * 0.6,
+            })
+
+    def draw_death_blast(self):
+        if self.phase != 4:
+            return
+        glPushMatrix()
+        glTranslatef(self.x, self.y + 1.0, self.z)
+        burst = 2.0 + self.death_time * 8.0
+        glColor3f(1.0, 0.95, 0.45)
+        dsph(burst, 16, 16)
+        glColor3f(1.0, 0.45, 0.0)
+        dsph(burst * 0.72, 16, 16)
+        glColor3f(1.0, 1.0, 1.0)
+        dsph(burst * 0.35, 12, 12)
+        glPopMatrix()
 
     def draw_leg(self, side, wa, cb, cg):
         glPushMatrix()
@@ -217,6 +251,8 @@ class Mahoraga:
         glPopMatrix()
 
     def draw(self):
+        if self.phase >= 4:
+            return
         glPushMatrix()
         glTranslatef(self.x, self.y, self.z)
         glRotatef(self.angle, 0,1,0)
@@ -250,6 +286,8 @@ class Mahoraga:
         glPopMatrix()
 
     def draw_health_bar(self):
+        if self.phase >= 4:
+            return
         glPushMatrix()
         glTranslatef(self.x, self.y+4.5, self.z)
         bw, bh = 4.0, 0.4
@@ -279,6 +317,22 @@ class Mahoraga:
 
     def update(self, dt):
         self.walk_anim_time += dt
+        if self.phase == 4:
+            self.death_time += dt
+            self.y += 4.0 * dt
+            for _ in range(8):
+                ang = random.random() * math.pi * 2.0
+                elev = (random.random() - 0.5) * math.pi
+                state.particles.append({
+                    'x': self.x + math.cos(ang) * math.cos(elev) * 1.2,
+                    'y': self.y + 1.0 + math.sin(elev) * 1.2,
+                    'z': self.z + math.sin(ang) * math.cos(elev) * 1.2,
+                    'vy': 3.0 + random.random() * 6.0,
+                    'life': 0.35 + random.random() * 0.45,
+                })
+            if self.death_time >= 1.3:
+                self.phase = 5
+            return
         if self.phase == 1:
             if self.hp <= 50.0:
                 self.phase = 2; self.transition_time = 0.0
@@ -307,6 +361,9 @@ class Mahoraga:
                                         'z':self.z+(random.random()-0.5)*6, 'vy':2+random.random()*5, 'life':1.0})
             if self.transition_time >= 2.0: self.phase = 3; self.hp = 100.0
         elif self.phase == 3:
+            if self.hp <= 0.0:
+                self.start_death_blast()
+                return
             ty = 10+math.sin(time.time()*1.5)*3; tx = math.sin(time.time()*1.2)*12
             tz = state.player_z-12+math.cos(time.time()*0.9)*12
             self.vx, self.vy, self.vz = (tx-self.x)*1.5, (ty-self.y)*1.5, (tz-self.z)*1.5
@@ -470,6 +527,8 @@ def update(dt):
                 for _ in range(5):
                     state.particles.append({'x':fb['x']+(random.random()-0.5)*2, 'y':fb['y']+(random.random()-0.5)*2,
                                             'z':fb['z']+(random.random()-0.5)*2, 'vy':2+random.random()*5, 'life':0.5})
+                if state.boss.hp <= 0:
+                    state.boss.start_death_blast()
             fb['y'] = -100 # destroy
     state.player_fireballs = [fb for fb in state.player_fireballs if fb['y'] > -5 and abs(fb['x']) < 60 and abs(fb['z']) < 60]
 
@@ -484,7 +543,7 @@ def display():
     lz = state.player_z - math.cos(math.radians(state.player_yaw)) * math.cos(math.radians(state.player_pitch)) * look_dist
     gluLookAt(state.player_x, state.player_y, state.player_z,
               lx, ly, lz, 0, 1, 0)
-    draw_ground(); draw_particles(); draw_fireballs(); state.boss.draw(); state.boss.draw_health_bar()
+    draw_ground(); draw_particles(); draw_fireballs(); state.boss.draw(); state.boss.draw_death_blast(); state.boss.draw_health_bar()
     draw_crosshair(); draw_text()
     glutSwapBuffers()
 
