@@ -23,7 +23,7 @@ ENEMY_FB_INNER = (1.0, 0.8, 0.0)
 ROOM_THEMES = {
     1: {'floor': (0.10, 0.11, 0.12), 'wall': (0.08, 0.09, 0.10), 'mortar': (0.02, 0.02, 0.02), 'fog_col': (0.03, 0.03, 0.04)}, 
     2: {'floor': (0.10, 0.04, 0.04), 'wall': (0.08, 0.03, 0.03), 'mortar': (0.02, 0.0, 0.0), 'fog_col': (0.04, 0.01, 0.01)}, 
-    3: {'floor': (0.05, 0.05, 0.05), 'wall': (0.04, 0.04, 0.04), 'mortar': (0.20, 0.02, 0.02), 'fog_col': (0.02, 0.02, 0.02)}        
+    3: {'floor': (0.05, 0.04, 0.04), 'wall': (0.02, 0.02, 0.02), 'mortar': (0.15, 0.02, 0.02), 'fog_col': (0.15, 0.02, 0.02)}        
 }
 
 WEAPONS = {
@@ -32,13 +32,10 @@ WEAPONS = {
     "SMG":     {"max_ammo": 30, "damage": 30, "pellets": 1, "spread": 0.05, "color": (0.2, 1.0, 0.2), "cooldown": 0.1}
 }
 
-# --- Fixed Linear Fog System ---
 def apply_fog_color(base_c, obj_x, obj_z):
     dist = math.sqrt((obj_x - state.player_x)**2 + (obj_z - state.player_z)**2)
     fog_c = ROOM_THEMES[state.room]['fog_col']
-    
     factor = max(0.0, min(1.0, dist / 30.0))
-    
     r = base_c[0] * (1 - factor) + fog_c[0] * factor
     g = base_c[1] * (1 - factor) + fog_c[1] * factor
     b = base_c[2] * (1 - factor) + fog_c[2] * factor
@@ -49,7 +46,7 @@ def check_obstacle_hit(px, py, pz):
         if py < obs.height:
             if obs.obs_type == "blood_pool": continue 
             rad = max(obs.width, obs.depth) * 0.65
-            if math.sqrt((px - obs.x)**2 + (pz - obs.z)**2) < rad:
+            if ((px - obs.x)**2 + (pz - obs.z)**2) < rad**2:
                 return True
     return False
 
@@ -57,19 +54,39 @@ def resolve_obstacle_collision(px, pz, radius=0.6):
     for obs in state.environment.obstacles:
         if obs.obs_type == "blood_pool": continue 
         rad = max(obs.width, obs.depth) * 0.65 + radius
-        dist = math.sqrt((px - obs.x)**2 + (pz - obs.z)**2)
-        if 0.0001 < dist < rad:
+        dist_sq = (px - obs.x)**2 + (pz - obs.z)**2
+        if 0.0001 < dist_sq < rad**2:
+            dist = math.sqrt(dist_sq)
             px = obs.x + ((px - obs.x) / dist) * rad
             pz = obs.z + ((pz - obs.z) / dist) * rad
     return px, pz
 
 class DetailedFPSWeaponDrawer:
     @staticmethod
-    def draw_weapon(weapon_type, recoil_offset):
+    def draw_weapon(weapon_type, recoil_offset, sway_x, sway_y, muzzle_flash):
         glPushMatrix()
+        
+        # WEAPON SWAY: Smoothly lag behind camera
         glTranslatef(0.25, -0.25 + (recoil_offset * 0.02), -0.8 + (recoil_offset * 0.05))
+        glRotatef(sway_y * -1.5, 1, 0, 0)
+        glRotatef(sway_x * -1.5, 0, 1, 0)
+        
         glRotatef(recoil_offset * 2.0, 1, 0, 0)
         glRotatef(-8.0, 0, 1, 0)
+
+        # MUZZLE FLASH
+        if muzzle_flash > 0:
+            glPushMatrix()
+            glTranslatef(0, 0.1, -0.8)
+            glColor3f(1.0, 0.8, 0.2)
+            glBegin(GL_LINES)
+            for _ in range(8):
+                rad = random.uniform(0, 6.28)
+                length = random.uniform(0.1, 0.4)
+                glVertex3f(0, 0, 0)
+                glVertex3f(math.cos(rad)*length, math.sin(rad)*length, -length*1.5)
+            glEnd()
+            glPopMatrix()
 
         if weapon_type == "HANDGUN":
             glColor3f(0.1, 0.1, 0.1)
@@ -126,7 +143,6 @@ class GameObject:
 
     def update(self, dt):
         if self.is_held: return
-
         if not self.grounded:
             self.velocity_y -= 45.0 * dt 
             self.x += self.velocity_x * dt
@@ -178,6 +194,15 @@ class GameObject:
         self.trail.clear()
 
     def draw_world(self):
+        # BLOB SHADOW
+        if self.grounded and not self.is_held:
+            glPushMatrix()
+            glTranslatef(self.x, 0.015, self.z)
+            glColor3f(*apply_fog_color((0.02, 0.02, 0.02), self.x, self.z))
+            glScalef(self.size * 0.6, 0.01, self.size * 0.6)
+            dsph(1.0)
+            glPopMatrix()
+
         if self.is_thrown and len(self.trail) > 1:
             glBegin(GL_LINES)
             for i in range(len(self.trail) - 1):
@@ -197,9 +222,13 @@ class GameObject:
         self.draw_model(is_held=False)
         glPopMatrix()
 
-    def draw_fps(self, swing_progress, bob_offset):
+    def draw_fps(self, swing_progress, bob_offset, sway_x, sway_y):
         glPushMatrix()
         glTranslatef(0.3, -0.2 + bob_offset, -0.8)
+        
+        glRotatef(sway_y * -1.5, 1, 0, 0)
+        glRotatef(sway_x * -1.5, 0, 1, 0)
+        
         if swing_progress > 0:
             swing_angle = math.sin(swing_progress * math.pi)
             glRotatef(swing_angle * -70, 1, 0, 0)
@@ -358,6 +387,10 @@ class Obstacle:
                     glPopMatrix()
             random.seed()
             
+        elif self.obs_type == "altar":
+            glColor3f(*cdark); glPushMatrix(); glTranslatef(0, self.height/2, 0); glScalef(self.width, self.height, self.depth); dcube(1.0); glPopMatrix()
+            glColor3f(*c); glPushMatrix(); glTranslatef(0, self.height, 0); glScalef(self.width*1.1, 0.4, self.depth*1.1); dcube(1.0); glPopMatrix()
+
         else:
             glColor3f(*c); glPushMatrix(); glTranslatef(0, self.height/2, 0); glScalef(self.width, self.height, self.depth); dcube(1.0); glPopMatrix()
         glPopMatrix()
@@ -371,7 +404,7 @@ class Environment:
         
         if room_level == 1: self.width, self.depth, obs_count, obs_choices = 20, 60, 8, ["pillar", "tombstone", "cage", "altar", "spike_trap", "blood_pool", "gore_pile"]
         elif room_level == 2: self.width, self.depth, obs_count, obs_choices = 24, 80, 14, ["pillar", "tombstone", "cage", "altar", "spike_trap", "blood_pool", "gore_pile"]
-        else: self.width, self.depth, obs_count, obs_choices = 40, 60, 8, ["pillar", "blood_pool", "gore_pile"] 
+        else: self.width, self.depth, obs_count, obs_choices = 60, 60, 0, [] 
 
         self.theme = ROOM_THEMES.get(room_level, ROOM_THEMES[1])
         
@@ -396,12 +429,11 @@ class Environment:
                 var = random.uniform(-0.02, 0.02) 
                 self.floor_tiles.append({'x': x, 'z': z, 'w': 3.8, 'h': 3.8, 'base_color': (max(0, bc[0]+var), max(0, bc[1]+var), max(0, bc[2]+var))}) 
 
-        if self.room_level < 3:
-            wall_h, bw, bh = 25, 5.0, 2.5 
-            self._build_wall_side(-hw, -hd, hw, -hd, wall_h, bw, bh) 
-            self._build_wall_side(hw, hd, -hw, hd, wall_h, bw, bh)   
-            self._build_wall_side(-hw, hd, -hw, -hd, wall_h, bw, bh) 
-            self._build_wall_side(hw, -hd, hw, hd, wall_h, bw, bh)   
+        wall_h, bw, bh = 25, 5.0, 2.5 
+        self._build_wall_side(-hw, -hd, hw, -hd, wall_h, bw, bh) 
+        self._build_wall_side(hw, hd, -hw, hd, wall_h, bw, bh)   
+        self._build_wall_side(-hw, hd, -hw, -hd, wall_h, bw, bh) 
+        self._build_wall_side(hw, -hd, hw, hd, wall_h, bw, bh)   
 
     def _build_wall_side(self, x1, z1, x2, z2, h, bw, bh):
         dx, dz = x2 - x1, z2 - z1
@@ -432,24 +464,59 @@ class Environment:
                 })
 
     def _generate_obstacles(self, count, obs_choices):
-        hw, hd, placed = self.width // 2, self.depth // 2, 0
-        while placed < count:
-            x, z = random.uniform(-hw+3, hw-3), random.uniform(-hd+10, hd-10) 
-            if abs(x) >= 3.0 and not any(abs(obs.x - x) < 4.0 and abs(obs.z - z) < 4.0 for obs in self.obstacles):
-                self.obstacles.append(Obstacle(x, z, random.choice(obs_choices)))
-                placed += 1
+        hw, hd = self.width // 2, self.depth // 2
+        
+        if self.room_level < 3:
+            for z in range(int(-hd + 20), int(hd - 10), 25):
+                side = 1 if (z // 25) % 2 == 0 else -1
+                for x in range(2, int(hw), 2): 
+                    px = side * (x + 1)
+                    p = Obstacle(px, z, "pillar")
+                    p.height, p.width, p.depth = 25.0, 3.0, 3.0
+                    self.obstacles.append(p)
+                    
+            placed = 0
+            while placed < count:
+                x, z = random.uniform(-hw+3, hw-3), random.uniform(-hd+10, hd-10) 
+                if abs(x) >= 3.0 and not any(abs(obs.x - x) < 4.0 and abs(obs.z - z) < 4.0 for obs in self.obstacles):
+                    self.obstacles.append(Obstacle(x, z, random.choice(obs_choices)))
+                    placed += 1
+        elif self.room_level == 3:
+            for i in range(12):
+                angle = math.radians(i * 30)
+                px, pz = math.cos(angle)*18, math.sin(angle)*18
+                p = Obstacle(px, pz, "pillar")
+                p.height, p.width, p.depth = 20.0, 3.5, 3.5
+                self.obstacles.append(p)
+            
+            for i in range(4):
+                angle = math.radians(i * 90 + 45)
+                px, pz = math.cos(angle)*8, math.sin(angle)*8
+                p = Obstacle(px, pz, "altar")
+                p.height, p.width, p.depth = 4.0, 6.0, 3.0
+                p.rotation = math.degrees(angle) + 90 
+                self.obstacles.append(p)
 
     def _generate_objects(self):
-        hw, hd = self.width // 2, self.depth // 2
-        for _ in range(self.room_level * 2 + 1): self.objects.append(GameObject(random.uniform(-hw+2, hw-2), random.uniform(-hd+10, hd-10), "medkit"))
-        
-        gun_count = 2 if self.room_level < 3 else 3
-        for _ in range(gun_count):
-            g_type = random.choice(["shotgun", "smg", "handgun"])
-            self.objects.append(GameObject(random.uniform(-hw+2, hw-2), random.uniform(-hd+10, hd-10), g_type))
-        
-        throw_count = 5 if self.room_level == 1 else (8 if self.room_level == 2 else 4)
-        for _ in range(throw_count): self.objects.append(GameObject(random.uniform(-hw+2, hw-2), random.uniform(-hd+10, hd-10), random.choice(["axe", "spear", "rock", "knife"])))
+        if self.room_level < 3:
+            hw, hd = self.width // 2, self.depth // 2
+            for _ in range(self.room_level * 2 + 1): self.objects.append(GameObject(random.uniform(-hw+2, hw-2), random.uniform(-hd+10, hd-10), "medkit"))
+            
+            gun_count = 2 if self.room_level < 3 else 3
+            for _ in range(gun_count):
+                g_type = random.choice(["shotgun", "smg", "handgun"])
+                self.objects.append(GameObject(random.uniform(-hw+2, hw-2), random.uniform(-hd+10, hd-10), g_type))
+            
+            throw_count = 5 if self.room_level == 1 else (8 if self.room_level == 2 else 4)
+            for _ in range(throw_count): self.objects.append(GameObject(random.uniform(-hw+2, hw-2), random.uniform(-hd+10, hd-10), random.choice(["axe", "spear", "rock", "knife"])))
+        else:
+            for i in range(12):
+                ang = math.radians(i * 30)
+                px, pz = math.cos(ang)*22, math.sin(ang)*22
+                if i % 2 == 0: obj_type = "medkit"
+                elif i % 3 == 0: obj_type = "shotgun"
+                else: obj_type = "smg"
+                self.objects.append(GameObject(px, pz, obj_type))
 
     def draw_room(self):
         hw, hd = self.width / 2, self.depth / 2
@@ -470,16 +537,22 @@ class Environment:
                 glVertex3f(world_x, 0.01, world_z)
         glEnd()
 
+        glBegin(GL_QUADS)
+        for w in self.wall_bricks:
+            glColor3f(*apply_fog_color(w['color_bottom'], w['x1'], w['z1']))
+            glVertex3f(w['x1'], w['yb'], w['z1']); glVertex3f(w['x2'], w['yb'], w['z2'])
+            glColor3f(*apply_fog_color(w['color_top'], w['x2'], w['z2']))
+            glVertex3f(w['x2'], w['yt'], w['z2']); glVertex3f(w['x1'], w['yt'], w['z1'])
+        glEnd()
+
         if self.room_level < 3:
-            wall_h = 25.0
+            # OPPRESSIVE CEILING
             glBegin(GL_QUADS)
-            for w in self.wall_bricks:
-                glColor3f(*apply_fog_color(w['color_bottom'], w['x1'], w['z1']))
-                glVertex3f(w['x1'], w['yb'], w['z1']); glVertex3f(w['x2'], w['yb'], w['z2'])
-                glColor3f(*apply_fog_color(w['color_top'], w['x2'], w['z2']))
-                glVertex3f(w['x2'], w['yt'], w['z2']); glVertex3f(w['x1'], w['yt'], w['z1'])
+            glColor3f(*apply_fog_color((0.01, 0.01, 0.01), 0, 0))
+            glVertex3f(-hw, 25.0, -hd); glVertex3f(hw, 25.0, -hd)
+            glVertex3f(hw, 25.0, hd); glVertex3f(-hw, 25.0, hd)
             glEnd()
-            
+
             glBegin(GL_LINES)
             for v in self.vines:
                 glColor3f(*apply_fog_color((0.15, 0.02, 0.02), v[0], v[2]))
@@ -490,7 +563,7 @@ class Environment:
             for chain in self.chains:
                 glColor3f(*apply_fog_color((0.02, 0.02, 0.02), chain['x'], chain['z']))
                 glPushMatrix()
-                glTranslatef(chain['x'], wall_h, chain['z'])
+                glTranslatef(chain['x'], 25.0, chain['z'])
                 for i in range(chain['length']):
                     glTranslatef(0, -0.6, 0); glRotatef(90, 0, 1, 0)
                     glPushMatrix(); glScalef(0.1, 0.6, 0.05); dcube(1.0); glPopMatrix()
@@ -507,24 +580,19 @@ class Environment:
                 glPopMatrix()
 
         elif self.room_level == 3:
-            glColor3f(*apply_fog_color(self.theme['mortar'], 0, 0))
-            glBegin(GL_LINES)
-            for i in range(360):
-                rad = math.radians(i); rad2 = math.radians(i+1)
-                glVertex3f(math.cos(rad)*15, 0.1, math.sin(rad)*15)
-                glVertex3f(math.cos(rad2)*15, 0.1, math.sin(rad2)*15)
-                if i % 45 == 0:
-                    glVertex3f(0, 0.1, 0); glVertex3f(math.cos(rad)*15, 0.1, math.sin(rad)*15)
-            glEnd()
+            glColor3f(*apply_fog_color((0.08, 0.08, 0.1), 0, 0))
+            glPushMatrix()
+            glTranslatef(0, 0.25, 0)
+            glScalef(12.0, 0.5, 12.0)
+            dcube(1.0)
+            glPopMatrix()
 
-            for i in range(12):
-                angle = math.radians(i * 30)
-                px, pz = math.cos(angle)*35, math.sin(angle)*35
-                glColor3f(*apply_fog_color((0.02, 0.02, 0.02), px, pz))
-                glPushMatrix()
-                glTranslatef(px, 10 + math.sin(time.time()+i)*5, pz)
-                glScalef(2.0, 30.0, 2.0); dcube(1.0)
-                glPopMatrix()
+            moon_y = 40.0 + math.sin(time.time() * 0.5) * 2.0
+            glPushMatrix()
+            glTranslatef(0, moon_y, -45)
+            glColor3f(*apply_fog_color((0.8, 0.1, 0.0), 0, -45))
+            dsph(8.0, 16, 16)
+            glPopMatrix()
 
         for o in self.obstacles: o.draw()
         for obj in self.objects:
@@ -535,11 +603,11 @@ class Environment:
 
     def pickup_object(self, px, pz):
         if self.held_object: return False
-        n_obj, n_dist = None, 5.0
+        n_obj, n_dist_sq = None, 25.0
         for obj in self.objects:
             if obj.is_held or not obj.grounded: continue
-            d = math.sqrt((obj.x - px) ** 2 + (obj.z - pz) ** 2)
-            if d < n_dist: n_dist, n_obj = d, obj
+            d_sq = (obj.x - px)**2 + (obj.z - pz)**2
+            if d_sq < n_dist_sq: n_dist_sq, n_obj = d_sq, obj
         if n_obj:
             if n_obj.is_consumable:
                 if state.hp < state.max_hp:
@@ -549,7 +617,10 @@ class Environment:
                     return True
                 return False
             elif n_obj.is_gun:
-                state.equip_weapon(n_obj.obj_type)
+                w_type = n_obj.obj_type.upper()
+                if w_type not in state.unlocked_weapons:
+                    state.unlocked_weapons.append(w_type)
+                state.equip_weapon(w_type)
                 self.objects.remove(n_obj)
                 return True
             else:
@@ -571,7 +642,12 @@ class Enemies:
         self.damage = 8.0 
         self.angle = 0.0
         self.last_attack_time = time.time()
+        self.attack_rate = 4.0 
         self.alive = True
+        
+        # DEATH ANIMATION VARS
+        self.is_dying = False
+        self.death_timer = 1.0
 
     def get_blood_color(self, base_col):
         dmg_ratio = 1.0 - max(0.0, min(1.0, self.hp / self.max_hp))
@@ -592,7 +668,7 @@ class Enemies:
         })
 
     def draw_health_bar(self):
-        if not self.alive: return
+        if not self.alive or self.is_dying: return
         glPushMatrix()
         glTranslatef(self.x, self.y + 2.0, self.z)
         bw, bh = 2.0, 0.2
@@ -619,34 +695,54 @@ class Zombie(Enemies):
     def __init__(self, x, z):
         super().__init__(x, 1.2, z)
         self.walk_t = 0.0
-        self.speed = 2.0 # Slightly slower base speed 
+        self.speed = 2.0 
+        self.attack_rate = 4.0
+        self.sprint_timer = 0.0 
 
     def update(self, dt):
         if not self.alive: return
+        
+        # DEATH ANIMATION LOGIC
+        if self.is_dying:
+            self.death_timer -= dt
+            self.y -= dt * 1.5
+            if self.death_timer <= 0:
+                self.alive = False
+            return
+            
         self.walk_t += dt
         dx, dz = state.player_x - self.x, state.player_z - self.z
-        dist = math.sqrt(dx * dx + dz * dz)
-        if dist > 0.01:
+        dist_sq = dx**2 + dz**2
+        
+        if random.random() < 0.005 and self.sprint_timer <= 0:
+            self.sprint_timer = 1.2 
+            
+        current_speed = self.speed * 3.0 if self.sprint_timer > 0 else self.speed
+        if self.sprint_timer > 0: self.sprint_timer -= dt
+
+        if dist_sq > 0.0001:
+            dist = math.sqrt(dist_sq)
             self.angle = math.degrees(math.atan2(dx, dz))
-            self.vx, self.vz = (dx / dist) * self.speed, (dz / dist) * self.speed
+            self.vx, self.vz = (dx / dist) * current_speed, (dz / dist) * current_speed
         self.x += self.vx * dt; self.z += self.vz * dt
         
-        if time.time() - self.last_attack_time > 4.0:
+        if time.time() - self.last_attack_time > self.attack_rate:
             self.spawn_fireball(8.0)
             self.last_attack_time = time.time()
 
-        if dist < 1.5 and time.time() - self.last_attack_time > 1.0:
+        if dist_sq < 2.25 and time.time() - self.last_attack_time > 1.0:
             state.take_damage(self.damage)
             self.last_attack_time = time.time()
 
     def draw(self):
         if not self.alive: return
         
+        # BLOB SHADOW
         glPushMatrix()
-        glTranslatef(self.x, 0.02, self.z)
-        glColor3f(*apply_fog_color((0.01, 0.01, 0.01), self.x, self.z))
+        glTranslatef(self.x, 0.015, self.z)
+        glColor3f(*apply_fog_color((0.02, 0.02, 0.02), self.x, self.z))
         glScalef(1.2, 0.01, 1.2)
-        dcube(1.0)
+        dsph(0.8)
         glPopMatrix()
 
         sp = self.vx ** 2 + self.vz ** 2
@@ -654,10 +750,17 @@ class Zombie(Enemies):
 
         glPushMatrix()
         glTranslatef(self.x, self.y, self.z); glRotatef(self.angle, 0, 1, 0)
+        
+        # DEATH ANIMATION ROTATION
+        if self.is_dying:
+            glRotatef(90 * (1.0 - self.death_timer), 1, 0, 0)
+            
         glScalef(1.2, 1.2, 1.2)
         
+        limb_twitch = math.sin(time.time() * 30.0) * 10.0 if self.sprint_timer > 0 else 0.0
+
         for side, a in [(-1, wa), (1, -wa)]:
-            glPushMatrix(); glTranslatef(side * 0.22, -0.05, 0); glRotatef(a * side, 1, 0, 0)
+            glPushMatrix(); glTranslatef(side * 0.22, -0.05, 0); glRotatef(a * side + limb_twitch, 1, 0, 0)
             glColor3f(*self.get_blood_color(self.C_PANTS)); dsph(0.15)
             glPushMatrix(); glRotatef(90, 1, 0, 0); dcyl(0.14, 0.13, 0.55); glPopMatrix()
             glPushMatrix(); glTranslatef(0, -0.30, 0); glScalef(0.28, 0.60, 0.28); dcube(1.0); glPopMatrix()
@@ -670,7 +773,7 @@ class Zombie(Enemies):
         glPushMatrix(); glTranslatef(0, 0.45, 0); glScalef(0.90, 0.90, 0.50); dcube(1.0); glPopMatrix()
         
         for side, a in [(-1, wa), (1, -wa)]:
-            glPushMatrix(); glTranslatef(side * 0.60, 0.75, 0); glRotatef(-a * side * 0.5, 1, 0, 0)
+            glPushMatrix(); glTranslatef(side * 0.60, 0.75, 0); glRotatef(-a * side * 0.5 - limb_twitch, 1, 0, 0)
             glColor3f(*self.get_blood_color(self.C_SHIRT)); dsph(0.16)
             glPushMatrix(); glTranslatef(0, -0.05, 0.20); glRotatef(-70, 1, 0, 0)
             glPushMatrix(); glScalef(0.22, 0.40, 0.22); dcube(1.0); glPopMatrix()
@@ -679,7 +782,13 @@ class Zombie(Enemies):
             glPushMatrix(); glScalef(0.20, 0.20, 0.40); dcube(1.0); glPopMatrix()
             glPopMatrix(); glPopMatrix()
 
+        head_twitch_z = math.sin(time.time() * 25.0) * 20.0 if self.sprint_timer > 0 else math.sin(time.time() * 2.0) * 5.0
+        head_twitch_x = math.cos(time.time() * 20.0) * 15.0 if self.sprint_timer > 0 else 0.0
+
         glPushMatrix(); glTranslatef(0, 1.55, 0)
+        glRotatef(head_twitch_z, 0, 0, 1) 
+        glRotatef(head_twitch_x, 1, 0, 0)
+        
         glColor3f(*self.get_blood_color(self.C_SKIN))
         glPushMatrix(); glScalef(0.70, 0.70, 0.70); dcube(1.0); glPopMatrix()
         
@@ -695,9 +804,19 @@ class Batman(Enemies):
         super().__init__(x, 3.5, z)
         self.hp = self.max_hp = 70.0 
         self.fly_t = random.random() * 6.0
+        self.attack_rate = 3.0
 
     def update(self, dt):
         if not self.alive: return
+        
+        if self.is_dying:
+            self.death_timer -= dt
+            self.y -= dt * 4.0
+            self.angle += 300 * dt
+            if self.death_timer <= 0:
+                self.alive = False
+            return
+            
         self.fly_t += dt
         cx, cz, yaw = state.player_x, state.player_z, state.player_yaw
         fwd_x, fwd_z = math.sin(math.radians(yaw)), -math.cos(math.radians(yaw))
@@ -706,12 +825,19 @@ class Batman(Enemies):
         target_x = cx + fwd_x * 8.0 + right_x * math.sin(self.fly_t * 1.2) * 4.0
         target_z = cz + fwd_z * 8.0 + right_z * math.sin(self.fly_t * 1.2) * 4.0
         
+        time_since_attack = time.time() - self.last_attack_time
+        if time_since_attack > self.attack_rate - 0.5:
+            target_y = 1.0 
+        else:
+            target_y = 3.5 + math.sin(self.fly_t * 1.5) * 0.8
+            
+        self.y += (target_y - self.y) * dt * 4.0
+        
         self.x += (target_x - self.x) * dt * 2.5
         self.z += (target_z - self.z) * dt * 2.5
-        self.y = 3.5 + math.sin(self.fly_t * 1.5) * 0.8
         self.angle = math.degrees(math.atan2(cx - self.x, cz - self.z))
         
-        if time.time() - self.last_attack_time > 3.0:
+        if time_since_attack > self.attack_rate:
             self.spawn_fireball(14.0) 
             self.last_attack_time = time.time()
             
@@ -728,19 +854,24 @@ class Batman(Enemies):
     def draw(self):
         if not self.alive: return
         
+        # BLOB SHADOW
+        glPushMatrix()
+        glTranslatef(self.x, 0.015, self.z)
+        glColor3f(*apply_fog_color((0.02, 0.02, 0.02), self.x, self.z))
+        glScalef(1.4, 0.01, 1.4)
+        dsph(0.8)
+        glPopMatrix()
+        
         cb = self.get_blood_color((0.4, 0.4, 0.45)) 
         c_blk = self.get_blood_color((0.1, 0.1, 0.12)) 
         c_belt = self.get_blood_color((0.6, 0.5, 0.2)) 
-        
-        glPushMatrix()
-        glTranslatef(self.x, 0.02, self.z)
-        glColor3f(*apply_fog_color((0.01, 0.01, 0.01), self.x, self.z))
-        glScalef(1.4, 0.01, 1.4)
-        dcube(1.0)
-        glPopMatrix()
 
         glPushMatrix()
         glTranslatef(self.x, self.y, self.z); glRotatef(self.angle, 0, 1, 0)
+        
+        if self.is_dying:
+            glRotatef(90 * (1.0 - self.death_timer), 1, 0, 0)
+            
         glRotatef(math.sin(self.fly_t * 2.0) * 10.0, 1, 0, 0) 
         glScalef(1.4, 1.4, 1.4)
 
@@ -801,43 +932,35 @@ class Batman(Enemies):
 
         glPopMatrix()
 
-class Mahoraga:
+class Mahoraga(Enemies):
     def __init__(self):
-        self.x, self.y, self.z = 0.0, 0.0, 0.0 
-        self.vx = self.vy = self.vz = 0.0
-        
-        # Massive HP boost
-        self.hp, self.max_hp, self.phase = 6000.0, 6000.0, 1 
-        
-        self.angle, self.last_attack_time = 0.0, time.time()
+        super().__init__(0.0, 0.0, 0.0)
+        self.hp = self.max_hp = 6000.0 
+        self.phase = 1 
         self.walk_anim_time = 0.0
-
-    def get_blood_color(self, base_col):
-        dmg_ratio = 1.0 - max(0.0, min(1.0, self.hp / self.max_hp))
-        blood_red = (0.5, 0.0, 0.0)
-        r = base_col[0] * (1 - dmg_ratio) + blood_red[0] * dmg_ratio
-        g = base_col[1] * (1 - dmg_ratio) + blood_red[1] * dmg_ratio
-        b = base_col[2] * (1 - dmg_ratio) + blood_red[2] * dmg_ratio
-        return apply_fog_color((r, g, b), self.x, self.z)
+        self.attack_rate = 2.5
 
     def draw(self):
         if self.phase >= 4: return
         
+        # MASSIVE BLOB SHADOW
+        glPushMatrix()
+        glTranslatef(self.x, 0.015, self.z)
+        glColor3f(*apply_fog_color((0.01, 0.01, 0.01), self.x, self.z))
+        glScalef(4.0, 0.01, 4.0)
+        dsph(1.0)
+        glPopMatrix()
+        
         cb = self.get_blood_color((0.85, 0.85, 0.85))
         c_skirt = self.get_blood_color((0.15, 0.15, 0.18))
         c_gold = apply_fog_color((0.80, 0.65, 0.20), self.x, self.z)
-        
-        glPushMatrix()
-        glTranslatef(self.x, 0.02, self.z)
-        glColor3f(*apply_fog_color((0.01, 0.01, 0.01), self.x, self.z))
-        glScalef(3.0, 0.01, 3.0)
-        dcube(1.0)
-        glPopMatrix()
 
         glPushMatrix()
         glTranslatef(self.x, self.y + 1.6, self.z) 
         glRotatef(self.angle, 0, 1, 0)
-        glScalef(1.6, 1.6, 1.6)
+        
+        pulse = 2.0 + math.sin(time.time() * (4.0 + self.phase)) * 0.1
+        glScalef(pulse, 2.0, pulse)
         
         wa = math.sin(self.walk_anim_time * (10.0 if self.phase < 3 else 15.0)) * 20.0
         
@@ -966,15 +1089,12 @@ class Mahoraga:
     def spawn_fireball(self, spread_offset=0.0):
         speed = 12.0 + (self.phase * 3.0)
         tx, ty, tz = state.player_x, state.player_y, state.player_z
-        
         dx, dy, dz = tx - self.x, ty - (self.y + 3.0), tz - self.z
-        
         if spread_offset != 0:
             yaw = math.atan2(dx, dz) + math.radians(spread_offset)
             dist_xz = math.sqrt(dx*dx + dz*dz)
             dx = math.sin(yaw) * dist_xz
             dz = math.cos(yaw) * dist_xz
-            
         d = max(math.sqrt(dx * dx + dy * dy + dz * dz), 0.0001)
         state.fireballs.append({
             'id': random.random() * 100, 'x': self.x, 'y': self.y + 3.0, 'z': self.z,
@@ -986,20 +1106,25 @@ class Mahoraga:
         if self.phase >= 4: return
         self.walk_anim_time += dt
         
-        # Shifted Phase triggers for 6000 HP pool
         if self.hp < 2000: self.phase = 3
         elif self.hp < 4000: self.phase = 2
 
+        self.attack_rate = max(1.0, 2.5 - (self.phase * 0.5))
+
         dx, dz = state.player_x - self.x, state.player_z - self.z
-        dist = max(math.sqrt(dx * dx + dz * dz), 0.01)
-        self.angle = math.degrees(math.atan2(dx, dz))
+        dist_sq = dx**2 + dz**2
+        if dist_sq > 0.01:
+            dist = math.sqrt(dist_sq)
+            self.angle = math.degrees(math.atan2(dx, dz))
+            speed = 2.0 + (self.phase * 1.0)
+            self.vx, self.vz = (dx / dist) * speed, (dz / dist) * speed
+            self.x += self.vx * dt; self.z += self.vz * dt
         
-        speed = 2.0 + (self.phase * 1.0)
-        self.vx, self.vz = (dx / dist) * speed, (dz / dist) * speed
-        self.x += self.vx * dt; self.z += self.vz * dt
+        # HORROR: AoE Ground Spikes Trigger
+        if random.random() < 0.3 * dt and len(state.boss_aoe) < 3:
+             state.boss_aoe.append({'x': state.player_x, 'z': state.player_z, 'timer': 1.5, 'duration': 0.5})
         
-        attack_rate = max(1.0, 2.5 - (self.phase * 0.5))
-        if time.time() - self.last_attack_time > attack_rate:
+        if time.time() - self.last_attack_time > self.attack_rate:
             self.spawn_fireball()
             if self.phase == 3: 
                 self.spawn_fireball(spread_offset=15.0)
@@ -1009,8 +1134,8 @@ class Mahoraga:
             max_minions = 1 + self.phase
             
             if random.random() < summon_chance and len(state.enemies) < max_minions:
-                ex = max(-18, min(18, self.x + random.uniform(-6, 6)))
-                ez = max(-28, min(28, self.z + random.uniform(-6, 6)))
+                ex = max(-30, min(30, self.x + random.uniform(-8, 8)))
+                ez = max(-30, min(30, self.z + random.uniform(-8, 8)))
                 
                 if self.phase == 3 and random.random() > 0.5:
                     minion = Batman(ex, ez)
@@ -1034,6 +1159,7 @@ class GameState:
         self.hp, self.max_hp = 100.0, 100.0
         self.invulnerable_timer = 0.0 
         self.current_weapon = "HANDGUN"
+        self.unlocked_weapons = ["HANDGUN"]
         self.ammo = WEAPONS[self.current_weapon]["max_ammo"]
         self.max_ammo = WEAPONS[self.current_weapon]["max_ammo"]
         self.is_reloading, self.reload_timer = False, 0.0
@@ -1049,6 +1175,13 @@ class GameState:
         self.fireballs, self.particles, self.player_fireballs, self.enemy_fireballs = [], [], [], []
         self.ambient_dust, self.enemies = [], []
         self.boss = Mahoraga()
+        
+        # SWAY & COMBAT VARS
+        self.prev_yaw, self.prev_pitch = 0.0, 0.0
+        self.sway_x, self.sway_y = 0.0, 0.0
+        self.muzzle_flash = 0.0
+        self.boss_aoe = []
+        
         self.environment = Environment(self.room)
         self.player_x, self.player_y, self.player_z = 0.0, 1.6, self.environment.depth / 2 - 5
         self.player_yaw, self.player_pitch = 0.0, 0.0
@@ -1081,16 +1214,17 @@ class GameState:
         self.environment = Environment(room_num)
         self.player_x, self.player_y, self.player_z = 0.0, 1.6, self.environment.depth / 2 - 5
         self.player_yaw, self.player_pitch = 0.0, 0.0
+        self.prev_yaw, self.prev_pitch = 0.0, 0.0
         self.enemies.clear()
         self.enemy_fireballs.clear()
         self.player_fireballs.clear()
         self.fireballs.clear()
         self.particles.clear()
+        self.boss_aoe.clear()
         self.room_cleared = False
         self.wave = 1
         self.init_dust()
         
-        # Reduced initial enemy spawn counts
         if room_num == 1: self.max_waves_current, self.enemies_to_spawn = 3, 2
         elif room_num == 2: self.max_waves_current, self.enemies_to_spawn = 3, 3
         elif room_num == 3:
@@ -1118,26 +1252,27 @@ class GameState:
         fz = -math.cos(math.radians(self.player_yaw)) * math.cos(math.radians(self.player_pitch))
         hit_x, hit_z = self.player_x + fx * 2.5, self.player_z + fz * 2.5
         
-        # Boss Melee Hitbox Shrink
-        if self.room == 3 and not self.game_won and math.sqrt((hit_x-self.boss.x)**2 + (hit_z-self.boss.z)**2) < 3.0:
+        if self.room == 3 and not self.game_won and ((hit_x-self.boss.x)**2 + (hit_z-self.boss.z)**2) < 9.0:
             self.boss.hp = max(0, self.boss.hp - wep_damage)
             spawn_blood_explosion(hit_x, self.player_y, hit_z)
             self.hit_marker = 1.0
             
         for e in self.enemies:
-            if not e.alive: continue
-            if math.sqrt((hit_x - e.x)**2 + (hit_z - e.z)**2) < 3.5:
+            if not e.alive or e.is_dying: continue
+            if ((hit_x - e.x)**2 + (hit_z - e.z)**2) < 12.25:
                 e.hp = max(0, e.hp - wep_damage)
                 e.x += fx * 0.2; e.z += fz * 0.2
                 self.hit_marker = 1.0
                 spawn_blood_explosion(e.x, e.y+1.0, e.z)
-                if e.hp <= 0: e.alive = False
+                if e.hp <= 0 and not e.is_dying: 
+                    e.is_dying = True
 
     def spawn_player_fireball(self):
         self.ammo -= 1
         self.recoil_offset += 4.0
         self.player_pitch += 4.0
         self.screen_shake += 0.15 
+        self.muzzle_flash = 0.05 # Activate muzzle flash
         
         wep = WEAPONS[self.current_weapon]
         base_vx = math.sin(math.radians(self.player_yaw)) * math.cos(math.radians(self.player_pitch))
@@ -1278,7 +1413,11 @@ def draw_ui():
     if state.environment.held_object:
         ammo_txt = f"HELD: {state.environment.held_object.obj_type.upper()} | L-CLICK: MELEE | R-CLICK: THROW"
     else:
-        ammo_txt = f"{state.current_weapon}: {state.ammo}/{state.max_ammo} {'[RELOADING]' if state.is_reloading else ''}"
+        weps = []
+        for i, w in enumerate(["HANDGUN", "SMG", "SHOTGUN"]):
+            if w in state.unlocked_weapons: weps.append(f"{i+1}:{w[:2]}")
+        wep_str = " ".join(weps)
+        ammo_txt = f"{state.current_weapon}: {state.ammo}/{state.max_ammo} {'[RELOADING]' if state.is_reloading else ''} | {wep_str}"
         
     room_txt = f"Room: {state.room}/3 | Wave: {state.wave}/{state.max_waves_current} | Enemies left: {len(state.enemies) + state.enemies_to_spawn}"
     
@@ -1326,10 +1465,19 @@ def spawn_wall_hit_particles(x, y, z):
 def update_player(dt):
     if state.game_over: return
     
+    # WEAPON SWAY UPDATE LOGIC
+    delta_yaw = state.player_yaw - state.prev_yaw
+    delta_pitch = state.player_pitch - state.prev_pitch
+    state.prev_yaw = state.player_yaw
+    state.prev_pitch = state.player_pitch
+    state.sway_x = state.sway_x * 0.8 + delta_yaw * 0.2
+    state.sway_y = state.sway_y * 0.8 + delta_pitch * 0.2
+
     if state.melee_cooldown > 0: state.melee_cooldown -= dt
     if state.shoot_cooldown > 0: state.shoot_cooldown -= dt
     if state.melee_timer > 0: state.melee_timer -= dt
     if state.invulnerable_timer > 0: state.invulnerable_timer -= dt
+    if state.muzzle_flash > 0: state.muzzle_flash -= dt
     
     state.screen_shake = max(0.0, state.screen_shake - dt * 5.0)
     state.damage_flash = max(0.0, state.damage_flash - dt * 2.0)
@@ -1386,19 +1534,31 @@ def update(dt):
     update_player(dt)
     state.environment.update_objects(dt)
     
+    # HORROR: Boss AoE Spike Update
+    for aoe in state.boss_aoe:
+        if aoe['timer'] > 0:
+            aoe['timer'] -= dt
+            if aoe['timer'] <= 0:
+                dist_sq = (aoe['x'] - state.player_x)**2 + (aoe['z'] - state.player_z)**2
+                if dist_sq < 9.0: 
+                    state.take_damage(30.0)
+                    state.screen_shake += 1.5
+        else:
+            aoe['duration'] -= dt
+    state.boss_aoe = [a for a in state.boss_aoe if a['duration'] > 0]
+
     # Boss Cinematic Death Logic
     if state.room == 3 and not state.game_won:
         state.boss.update(dt)
         if state.boss.hp <= 0: 
             state.game_won = True
             state.boss.phase = 4 
-            # Epic explosion sequence
             for _ in range(10):
                 spawn_blood_explosion(state.boss.x + random.uniform(-2, 2), state.boss.y + random.uniform(0, 4), state.boss.z + random.uniform(-2, 2))
-            # Delete remaining minions and fireballs immediately
             state.enemies.clear()
             state.enemy_fireballs.clear()
             state.fireballs.clear()
+            state.boss_aoe.clear()
             
     for p in state.particles: 
         if p.get('is_blood', False):
@@ -1424,22 +1584,22 @@ def update(dt):
 
     for obj in state.environment.objects:
         if obj.is_thrown:
-            # Thrown Hitbox Shrink
-            if state.room == 3 and not state.game_won and math.sqrt((obj.x-state.boss.x)**2 + (obj.z-state.boss.z)**2) < 3.0:
+            if state.room == 3 and not state.game_won and ((obj.x-state.boss.x)**2 + (obj.z-state.boss.z)**2) < 9.0:
                 state.boss.hp = max(0, state.boss.hp - obj.damage)
                 obj.is_thrown, obj.grounded = False, True
                 spawn_blood_explosion(obj.x, obj.y, obj.z)
                 state.hit_marker = 1.0
             
             for e in state.enemies:
-                if not e.alive: continue
-                if math.sqrt((obj.x - e.x)**2 + (obj.z - e.z)**2) < 3.5: 
+                if not e.alive or e.is_dying: continue
+                if ((obj.x - e.x)**2 + (obj.z - e.z)**2) < 12.25: 
                     e.hp = max(0, e.hp - obj.damage) 
                     e.x += obj.velocity_x * 0.1; e.z += obj.velocity_z * 0.1
                     obj.is_thrown, obj.grounded = False, True
                     spawn_blood_explosion(e.x, e.y+1.0, e.z)
                     state.hit_marker = 1.0
-                    if e.hp <= 0: e.alive = False
+                    if e.hp <= 0 and not e.is_dying: 
+                        e.is_dying = True
                     break
 
     if state.room < 3 and not state.room_cleared:
@@ -1448,7 +1608,6 @@ def update(dt):
                 state.wave_timer -= dt
                 if state.wave_timer <= 0:
                     state.wave += 1
-                    # Scaled down wave increments
                     state.enemies_to_spawn = (2 + state.wave) if state.room == 1 else (3 + state.wave)
                     state.wave_timer = 4.0
             else:
@@ -1461,7 +1620,6 @@ def update(dt):
             ex, ez = random.uniform(-hw, hw), random.uniform(-hd, -hd + 15) 
             e = Zombie(ex, ez) if random.random() > 0.4 or state.room == 1 else Batman(ex, ez)
             
-            # Nerfed health and damage multipliers
             hp_mult = 1.0 + (state.room * 0.1) + (state.wave * 0.05)
             e.max_hp = 80 * hp_mult; e.hp = e.max_hp; e.damage = 6 * hp_mult
             
@@ -1475,16 +1633,18 @@ def update(dt):
         e1 = state.enemies[i]
         if not e1.alive: continue
         e1.update(dt)
-        e1.x, e1.z = resolve_obstacle_collision(e1.x, e1.z, radius=0.8)
-        sep_x, sep_z = 0.0, 0.0
-        for j in range(len(state.enemies)):
-            if i == j: continue
-            e2 = state.enemies[j]
-            if not e2.alive: continue
-            dist = math.sqrt((e1.x - e2.x)**2 + (e1.z - e2.z)**2)
-            if 0 < dist < 2.5:
-                sep_x += (e1.x - e2.x) / dist; sep_z += (e1.z - e2.z) / dist
-        e1.x += sep_x * dt * 2.0; e1.z += sep_z * dt * 2.0
+        if not e1.is_dying:
+            e1.x, e1.z = resolve_obstacle_collision(e1.x, e1.z, radius=0.8)
+            sep_x, sep_z = 0.0, 0.0
+            for j in range(len(state.enemies)):
+                if i == j: continue
+                e2 = state.enemies[j]
+                if not e2.alive or e2.is_dying: continue
+                dist_sq = (e1.x - e2.x)**2 + (e1.z - e2.z)**2
+                if 0 < dist_sq < 6.25:
+                    dist = math.sqrt(dist_sq)
+                    sep_x += (e1.x - e2.x) / dist; sep_z += (e1.z - e2.z) / dist
+            e1.x += sep_x * dt * 2.0; e1.z += sep_z * dt * 2.0
 
     for fb in state.player_fireballs:
         fb['x'] += fb['vx']*dt; fb['y'] += fb['vy']*dt; fb['z'] += fb['vz']*dt
@@ -1492,8 +1652,7 @@ def update(dt):
         if check_obstacle_hit(fb['x'], fb['y'], fb['z']):
             spawn_wall_hit_particles(fb['x'], fb['y'], fb['z']); fb['y'] = -100; continue
             
-        # Shrunk hit radius from 4.5 to 3.0 and adjusted headshot multiplier
-        if state.room == 3 and state.boss.phase < 4 and math.sqrt((fb['x']-state.boss.x)**2 + (fb['y']-state.boss.y)**2 + (fb['z']-state.boss.z)**2) < 3.0:
+        if state.room == 3 and state.boss.phase < 4 and ((fb['x']-state.boss.x)**2 + (fb['y']-state.boss.y)**2 + (fb['z']-state.boss.z)**2) < 9.0:
             damage = fb['damage'] * 1.5 if fb['y'] > state.boss.y + 2.5 else fb['damage']
             state.boss.hp = max(0, state.boss.hp - damage)
             spawn_blood_explosion(fb['x'], fb['y'], fb['z'])
@@ -1501,14 +1660,15 @@ def update(dt):
 
         if not hit:
             for e in state.enemies:
-                if not e.alive: continue
-                if math.sqrt((fb['x'] - e.x)**2 + (fb['y'] - e.y)**2 + (fb['z'] - e.z)**2) < 2.0:
+                if not e.alive or e.is_dying: continue
+                if ((fb['x'] - e.x)**2 + (fb['y'] - e.y)**2 + (fb['z'] - e.z)**2) < 4.0:
                     damage = fb['damage'] * 2 if fb['y'] > e.y + 1.0 else fb['damage']
                     e.hp = max(0, e.hp - damage)
                     e.x += fb['vx'] * 0.02; e.z += fb['vz'] * 0.02
                     spawn_blood_explosion(fb['x'], fb['y'], fb['z'])
                     state.hit_marker = 1.0
-                    if e.hp <= 0: e.alive = False
+                    if e.hp <= 0 and not e.is_dying: 
+                        e.is_dying = True
                     fb['y'] = -100; break
 
     state.player_fireballs = [fb for fb in state.player_fireballs if fb['y'] > -5 and abs(fb['x']) < 90 and abs(fb['z']) < 90]
@@ -1518,8 +1678,7 @@ def update(dt):
         if check_obstacle_hit(fb['x'], fb['y'], fb['z']):
             spawn_wall_hit_particles(fb['x'], fb['y'], fb['z']); fb['y'] = -100; continue
             
-        dist_to_player = math.sqrt((fb['x'] - state.player_x)**2 + (fb['y'] - state.player_y)**2 + (fb['z'] - state.player_z)**2)
-        if dist_to_player < 1.5:
+        if ((fb['x'] - state.player_x)**2 + (fb['y'] - state.player_y)**2 + (fb['z'] - state.player_z)**2) < 2.25:
             state.take_damage(fb.get('damage', 20.0))
             fb['y'] = -100
 
@@ -1542,7 +1701,6 @@ def display():
     lz = state.player_z - math.cos(math.radians(state.player_yaw)) * math.cos(math.radians(state.player_pitch)) * 10.0
     gluLookAt(state.player_x + sx, state.player_y + sy, state.player_z + sz, lx + sx, ly + sy, lz + sz, 0, 1, 0)
     
-    # Render background fog cube
     glPushMatrix()
     glTranslatef(state.player_x, state.player_y, state.player_z)
     glColor3f(*ROOM_THEMES[state.room]['fog_col'])
@@ -1552,6 +1710,21 @@ def display():
     state.environment.draw_room()
     draw_fireballs()
     draw_particles()
+    
+    # HORROR: Boss AoE Spike Draw
+    for aoe in state.boss_aoe:
+        glPushMatrix()
+        glTranslatef(aoe['x'], 0.02, aoe['z'])
+        if aoe['timer'] > 0:
+            glColor3f(1.0, 0.0, 0.0)
+            pulse = 1.0 + math.sin(time.time() * 20.0) * 0.1
+            glScalef(3.0 * pulse, 0.01, 3.0 * pulse)
+            dcube(1.0)
+        else:
+            glColor3f(*apply_fog_color((0.2, 0.0, 0.0), aoe['x'], aoe['z']))
+            glRotatef(-90, 1, 0, 0)
+            dcyl(3.0, 0.0, 8.0)
+        glPopMatrix()
     
     if state.room == 3:
         state.boss.draw(); state.boss.draw_health_bar()
@@ -1569,8 +1742,9 @@ def display():
 
     if state.environment.held_object:
         swing_prog = (state.melee_timer / 0.25) if state.melee_timer > 0 else 0
-        state.environment.held_object.draw_fps(swing_prog, bob_offset)
-    else: DetailedFPSWeaponDrawer.draw_weapon(state.current_weapon, state.recoil_offset)
+        state.environment.held_object.draw_fps(swing_prog, bob_offset, state.sway_x, state.sway_y)
+    else: 
+        DetailedFPSWeaponDrawer.draw_weapon(state.current_weapon, state.recoil_offset, state.sway_x, state.sway_y, state.muzzle_flash)
         
     glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
 
@@ -1593,6 +1767,12 @@ def keyboard(key, x, y):
     if k == b' ': state.trigger_attack()
     if k == b'e': state.environment.pickup_object(state.player_x, state.player_z)
     if k == b'f': state.environment.throw_held_object(state.player_x, state.player_y, state.player_z, state.player_yaw, state.player_pitch)
+    
+    # WEAPON SWAPPING LOGIC
+    if k == b'1' and "HANDGUN" in state.unlocked_weapons: state.equip_weapon("HANDGUN")
+    if k == b'2' and "SMG" in state.unlocked_weapons: state.equip_weapon("SMG")
+    if k == b'3' and "SHOTGUN" in state.unlocked_weapons: state.equip_weapon("SHOTGUN")
+        
     if k in (b'w', b'a', b's', b'd'): state.keys[k.decode()] = True
     if k == b'\x1b': sys.exit(0)
     if k == b'r':
