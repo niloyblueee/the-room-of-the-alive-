@@ -389,6 +389,7 @@ class Environment:
                 self.vines.append((x1,y1,z1, x2,y2,z2))
 
     def _generate_procedural_textures(self):
+
         hw, hd = self.width // 2, self.depth // 2
         for x in range(-int(hw), int(hw), 4):
             for z in range(-int(hd), int(hd), 4):
@@ -655,7 +656,7 @@ class Zombie(Enemies):
         glPushMatrix()
         glTranslatef(self.x, self.y, self.z); glRotatef(self.angle, 0, 1, 0)
         glScalef(1.2, 1.2, 1.2)
-        
+        #foot
         for side, a in [(-1, wa), (1, -wa)]:
             glPushMatrix(); glTranslatef(side * 0.22, -0.05, 0); glRotatef(a * side, 1, 0, 0)
             glColor3f(*self.get_blood_color(self.C_PANTS)); dsph(0.15)
@@ -668,7 +669,7 @@ class Zombie(Enemies):
             
         glColor3f(*self.get_blood_color(self.C_SHIRT))
         glPushMatrix(); glTranslatef(0, 0.45, 0); glScalef(0.90, 0.90, 0.50); dcube(1.0); glPopMatrix()
-        
+        #hands 
         for side, a in [(-1, wa), (1, -wa)]:
             glPushMatrix(); glTranslatef(side * 0.60, 0.75, 0); glRotatef(-a * side * 0.5, 1, 0, 0)
             glColor3f(*self.get_blood_color(self.C_SHIRT)); dsph(0.16)
@@ -744,6 +745,7 @@ class Batman(Enemies):
         glRotatef(math.sin(self.fly_t * 2.0) * 10.0, 1, 0, 0) 
         glScalef(1.4, 1.4, 1.4)
 
+        # Legs and boots
         for side in [-1, 1]:
             glPushMatrix()
             glTranslatef(side * 0.25, -0.8, 0)
@@ -765,6 +767,7 @@ class Batman(Enemies):
         glPushMatrix(); glTranslatef(0, -0.4, 0); glScalef(0.95, 0.15, 0.55); dcube(1.0); glPopMatrix()
         glPopMatrix()
 
+        # Arms and forearm details
         for side in [-1, 1]:
             glPushMatrix()
             glTranslatef(side * 0.6, 0.2, 0)
@@ -773,6 +776,7 @@ class Batman(Enemies):
             glPushMatrix(); glTranslatef(0, -0.2, 0); glScalef(0.3, 0.6, 0.3); dcube(1.0); glPopMatrix()
             glColor3f(*c_blk)
             glPushMatrix(); glTranslatef(0, -0.7, 0); glScalef(0.32, 0.5, 0.32); dcube(1.0); glPopMatrix() 
+            # Forearm spikes
             for sy in [-0.6, -0.75, -0.9]:
                 glPushMatrix(); glTranslatef(side * 0.15, sy, -0.1); glRotatef(side * 90, 0, 1, 0); dcyl(0.04, 0.0, 0.2); glPopMatrix()
             glPopMatrix()
@@ -841,6 +845,7 @@ class Mahoraga:
         
         wa = math.sin(self.walk_anim_time * (10.0 if self.phase < 3 else 15.0)) * 20.0
         
+        # Legs
         for side, a in [(-1, wa), (1, -wa)]:
             glPushMatrix()
             glTranslatef(side * 0.35, -0.1, 0) 
@@ -859,6 +864,7 @@ class Mahoraga:
         glPushMatrix()
         glColor3f(*c_skirt)
         glPushMatrix(); glScalef(1.0, 0.6, 0.8); dcube(1.0); glPopMatrix()
+        # Skirt panels (front/back)
         for i in [-0.4, 0, 0.4]:
             glPushMatrix(); glTranslatef(i, -0.4, 0.42); glRotatef(-10, 1, 0, 0); glScalef(0.35, 0.7, 0.05); dcube(1.0); glPopMatrix()
             glPushMatrix(); glTranslatef(i, -0.4, -0.42); glRotatef(10, 1, 0, 0); glScalef(0.35, 0.7, 0.05); dcube(1.0); glPopMatrix()
@@ -875,10 +881,12 @@ class Mahoraga:
         glColor3f(*self.get_blood_color((0.1, 0.1, 0.1)))
         glPushMatrix()
         glTranslatef(0, 0.3, 0.32); dsph(0.08)
+        # Chest studs
         for i in [-0.15, 0.15, -0.3, 0.3]:
             glPushMatrix(); glTranslatef(i, 0.05, -abs(i)*0.2); dsph(0.06); glPopMatrix()
         glPopMatrix()
 
+        # Arms
         for side, a in [(-1, wa), (1, -wa)]:
             glPushMatrix()
             glTranslatef(side * 0.7, 0.3, 0) 
@@ -908,6 +916,7 @@ class Mahoraga:
         glColor3f(0.2, 0.2, 0.2) 
         glPushMatrix(); glTranslatef(0, -0.15, 0.32); glScalef(0.25, 0.05, 0.05); dcube(1.0); glPopMatrix()
         glColor3f(*cb)
+        # Head spikes
         for ang in [20, -20, 60, -60]:
             glPushMatrix()
             glRotatef(ang, 0, 0, 1) 
@@ -919,6 +928,7 @@ class Mahoraga:
 
         glPushMatrix()
         glTranslatef(0, -0.2, -0.3)
+        # Neck/helmet ring segments
         for t in range(6):
             glRotatef(15, 1, 0, 0) 
             dcyl(0.15 - t*0.02, 0.15 - (t+1)*0.02, 0.4)
@@ -932,6 +942,7 @@ class Mahoraga:
         glColor3f(*c_gold)
         dsph(0.15) 
         glPushMatrix(); glTranslatef(0, 0, -0.05); dcyl(1.0, 1.0, 0.1, 16); glPopMatrix() 
+        # Halo spokes
         for i in range(8):
             glPushMatrix()
             glRotatef(i * 45, 0, 0, 1)
