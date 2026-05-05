@@ -619,7 +619,7 @@ class Zombie(Enemies):
     def __init__(self, x, z):
         super().__init__(x, 1.2, z)
         self.walk_t = 0.0
-        self.speed = 2.0 
+        self.speed = 2.0 # Slightly slower base speed 
 
     def update(self, dt):
         if not self.alive: return
@@ -805,7 +805,10 @@ class Mahoraga:
     def __init__(self):
         self.x, self.y, self.z = 0.0, 0.0, 0.0 
         self.vx = self.vy = self.vz = 0.0
-        self.hp, self.max_hp, self.phase = 600.0, 600.0, 1 
+        
+        # Massive HP boost
+        self.hp, self.max_hp, self.phase = 6000.0, 6000.0, 1 
+        
         self.angle, self.last_attack_time = 0.0, time.time()
         self.walk_anim_time = 0.0
 
@@ -976,15 +979,16 @@ class Mahoraga:
         state.fireballs.append({
             'id': random.random() * 100, 'x': self.x, 'y': self.y + 3.0, 'z': self.z,
             'vx': (dx / d) * speed, 'vy': (dy / d) * speed, 'vz': (dz / d) * speed,
-            'damage': 15.0 + (self.phase * 5.0)
+            'damage': 15.0 + (self.phase * 5.0) 
         })
 
     def update(self, dt):
-        if self.phase == 4: return
+        if self.phase >= 4: return
         self.walk_anim_time += dt
         
-        if self.hp < 200: self.phase = 3
-        elif self.hp < 400: self.phase = 2
+        # Shifted Phase triggers for 6000 HP pool
+        if self.hp < 2000: self.phase = 3
+        elif self.hp < 4000: self.phase = 2
 
         dx, dz = state.player_x - self.x, state.player_z - self.z
         dist = max(math.sqrt(dx * dx + dz * dz), 0.01)
@@ -1000,6 +1004,24 @@ class Mahoraga:
             if self.phase == 3: 
                 self.spawn_fireball(spread_offset=15.0)
                 self.spawn_fireball(spread_offset=-15.0)
+            
+            summon_chance = 0.25 + (0.15 * self.phase)
+            max_minions = 1 + self.phase
+            
+            if random.random() < summon_chance and len(state.enemies) < max_minions:
+                ex = max(-18, min(18, self.x + random.uniform(-6, 6)))
+                ez = max(-28, min(28, self.z + random.uniform(-6, 6)))
+                
+                if self.phase == 3 and random.random() > 0.5:
+                    minion = Batman(ex, ez)
+                else:
+                    minion = Zombie(ex, ez)
+                    minion.speed = 2.5 + (self.phase * 0.5) 
+                    
+                minion.max_hp = 50.0
+                minion.hp = minion.max_hp
+                state.enemies.append(minion)
+
             self.last_attack_time = time.time()
 
 class GameState:
@@ -1068,11 +1090,11 @@ class GameState:
         self.wave = 1
         self.init_dust()
         
+        # Reduced initial enemy spawn counts
         if room_num == 1: self.max_waves_current, self.enemies_to_spawn = 3, 2
         elif room_num == 2: self.max_waves_current, self.enemies_to_spawn = 3, 3
         elif room_num == 3:
-            # Infinite waves until boss is defeated
-            self.max_waves_current, self.enemies_to_spawn = 999, 2
+            self.max_waves_current, self.enemies_to_spawn = 1, 0
             self.boss = Mahoraga() 
 
     def restart_game(self):
@@ -1096,7 +1118,8 @@ class GameState:
         fz = -math.cos(math.radians(self.player_yaw)) * math.cos(math.radians(self.player_pitch))
         hit_x, hit_z = self.player_x + fx * 2.5, self.player_z + fz * 2.5
         
-        if self.room == 3 and math.sqrt((hit_x-self.boss.x)**2 + (hit_z-self.boss.z)**2) < 4.0:
+        # Boss Melee Hitbox Shrink
+        if self.room == 3 and not self.game_won and math.sqrt((hit_x-self.boss.x)**2 + (hit_z-self.boss.z)**2) < 3.0:
             self.boss.hp = max(0, self.boss.hp - wep_damage)
             spawn_blood_explosion(hit_x, self.player_y, hit_z)
             self.hit_marker = 1.0
@@ -1363,9 +1386,19 @@ def update(dt):
     update_player(dt)
     state.environment.update_objects(dt)
     
-    if state.room == 3:
+    # Boss Cinematic Death Logic
+    if state.room == 3 and not state.game_won:
         state.boss.update(dt)
-        if state.boss.hp <= 0: state.game_won = True
+        if state.boss.hp <= 0: 
+            state.game_won = True
+            state.boss.phase = 4 
+            # Epic explosion sequence
+            for _ in range(10):
+                spawn_blood_explosion(state.boss.x + random.uniform(-2, 2), state.boss.y + random.uniform(0, 4), state.boss.z + random.uniform(-2, 2))
+            # Delete remaining minions and fireballs immediately
+            state.enemies.clear()
+            state.enemy_fireballs.clear()
+            state.fireballs.clear()
             
     for p in state.particles: 
         if p.get('is_blood', False):
@@ -1391,7 +1424,8 @@ def update(dt):
 
     for obj in state.environment.objects:
         if obj.is_thrown:
-            if state.room == 3 and math.sqrt((obj.x-state.boss.x)**2 + (obj.z-state.boss.z)**2) < 6.0:
+            # Thrown Hitbox Shrink
+            if state.room == 3 and not state.game_won and math.sqrt((obj.x-state.boss.x)**2 + (obj.z-state.boss.z)**2) < 3.0:
                 state.boss.hp = max(0, state.boss.hp - obj.damage)
                 obj.is_thrown, obj.grounded = False, True
                 spawn_blood_explosion(obj.x, obj.y, obj.z)
@@ -1408,32 +1442,31 @@ def update(dt):
                     if e.hp <= 0: e.alive = False
                     break
 
-    # Infinite scaling waves for Room 3 until the boss is killed
-    if not state.room_cleared and not state.game_won:
+    if state.room < 3 and not state.room_cleared:
         if not state.enemies and state.enemies_to_spawn <= 0:
-            if state.room < 3 and state.wave >= state.max_waves_current:
-                state.room_cleared = True
-            else:
+            if state.wave < state.max_waves_current:
                 state.wave_timer -= dt
                 if state.wave_timer <= 0:
                     state.wave += 1
-                    if state.room == 1:
-                        state.enemies_to_spawn = 2 + state.wave
-                    elif state.room == 2:
-                        state.enemies_to_spawn = 3 + state.wave
-                    elif state.room == 3:
-                        state.enemies_to_spawn = 2 + (state.wave // 2)
+                    # Scaled down wave increments
+                    state.enemies_to_spawn = (2 + state.wave) if state.room == 1 else (3 + state.wave)
                     state.wave_timer = 4.0
+            else:
+                state.room_cleared = True
 
-    if state.enemies_to_spawn > 0 and not state.game_won:
+    if state.enemies_to_spawn > 0:
         state.spawn_timer -= dt
         if state.spawn_timer <= 0:
             hw, hd = state.environment.width / 2 - 5, state.environment.depth / 2 - 5
             ex, ez = random.uniform(-hw, hw), random.uniform(-hd, -hd + 15) 
             e = Zombie(ex, ez) if random.random() > 0.4 or state.room == 1 else Batman(ex, ez)
+            
+            # Nerfed health and damage multipliers
             hp_mult = 1.0 + (state.room * 0.1) + (state.wave * 0.05)
             e.max_hp = 80 * hp_mult; e.hp = e.max_hp; e.damage = 6 * hp_mult
+            
             if isinstance(e, Zombie): e.speed = 2.0 + (state.room * 0.15) + (state.wave * 0.05)
+            
             state.enemies.append(e)
             state.enemies_to_spawn -= 1
             state.spawn_timer = max(0.5, 2.0 - state.wave * 0.3)
@@ -1458,8 +1491,10 @@ def update(dt):
         hit = False
         if check_obstacle_hit(fb['x'], fb['y'], fb['z']):
             spawn_wall_hit_particles(fb['x'], fb['y'], fb['z']); fb['y'] = -100; continue
-        if state.room == 3 and math.sqrt((fb['x']-state.boss.x)**2 + (fb['y']-state.boss.y)**2 + (fb['z']-state.boss.z)**2) < 4.5:
-            damage = fb['damage'] * 2 if fb['y'] > state.boss.y + 1.5 else fb['damage']
+            
+        # Shrunk hit radius from 4.5 to 3.0 and adjusted headshot multiplier
+        if state.room == 3 and state.boss.phase < 4 and math.sqrt((fb['x']-state.boss.x)**2 + (fb['y']-state.boss.y)**2 + (fb['z']-state.boss.z)**2) < 3.0:
+            damage = fb['damage'] * 1.5 if fb['y'] > state.boss.y + 2.5 else fb['damage']
             state.boss.hp = max(0, state.boss.hp - damage)
             spawn_blood_explosion(fb['x'], fb['y'], fb['z'])
             state.hit_marker = 1.0; fb['y'] = -100; hit = True
