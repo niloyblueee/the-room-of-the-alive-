@@ -935,7 +935,7 @@ class Batman(Enemies):
 class Mahoraga(Enemies):
     def __init__(self):
         super().__init__(0.0, 0.0, 0.0)
-        self.hp = self.max_hp = 6000.0 
+        self.hp = self.max_hp = 4000.0
         self.phase = 1 
         self.walk_anim_time = 0.0
         self.attack_rate = 2.5
