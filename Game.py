@@ -811,7 +811,7 @@ class Mahoraga:
         self.vx = self.vy = self.vz = 0.0
         
         # Massive HP boost
-        self.hp, self.max_hp, self.phase = 6000.0, 6000.0, 1 
+        self.hp, self.max_hp, self.phase = 2000.0, 2000.0, 1 
         
         self.angle, self.last_attack_time = 0.0, time.time()
         self.walk_anim_time = 0.0
