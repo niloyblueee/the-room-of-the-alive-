@@ -2,6 +2,7 @@ import math
 import time
 import random
 import sys
+import os
 
 from OpenGL.GL import *
 from OpenGL.GLU import *
@@ -9,6 +10,16 @@ from OpenGL.GLUT import *
 
 W_WIDTH, W_HEIGHT = 1900, 1080
 PLAYER_SPEED = 14.0
+
+ASSET_DIR = os.path.dirname(os.path.abspath(__file__))
+SOUNDS_DIR = os.path.join(ASSET_DIR, "sounds")
+
+INTRO_TITLE = "The Room of The Alive"
+THANKS_LINES = [
+    "Thanks for playing.",
+    "project of CSE 423 (Computer graphics)",
+    "Made by nilbllueee, Abirsahacode, Tanisha-328",
+]
 
 # ---------- colors ----------
 C_BODY   = (0.85, 0.85, 0.85)
@@ -31,6 +42,102 @@ WEAPONS = {
     "SHOTGUN": {"max_ammo": 6,  "damage": 25, "pellets": 6, "spread": 0.12, "color": (1.0, 0.4, 0.0), "cooldown": 0.8},
     "SMG":     {"max_ammo": 30, "damage": 30, "pellets": 1, "spread": 0.05, "color": (0.2, 1.0, 0.2), "cooldown": 0.1}
 }
+
+class AudioManager:
+    def __init__(self, base_dir):
+        self.enabled = False
+        self.last_bgm = None
+        self.last_weapon_times = {}
+        self.sounds = {}
+        self.music_files = {
+            "level": os.path.join(base_dir, "sounds", "level bgm .mp3"),
+            "boss": os.path.join(base_dir, "sounds", "boss level bgm.mp3"),
+        }
+        self.weapon_map = {
+            "HANDGUN": "pistol",
+            "SMG": "pistol",
+            "SHOTGUN": "shotgun",
+        }
+        self.weapon_cooldown = {
+            "HANDGUN": 0.09,
+            "SMG": 0.0,
+            "SHOTGUN": 0.12,
+        }
+
+        try:
+            import pygame
+            pygame.mixer.init()
+            self.pygame = pygame
+            self.enabled = True
+            self._load_sounds(base_dir)
+        except Exception:
+            self.pygame = None
+
+    def _load_sounds(self, base_dir):
+        if not self.enabled:
+            return
+        sound_files = {
+            "pistol": os.path.join(base_dir, "sounds", "pistol.mp3"),
+            "shotgun": os.path.join(base_dir, "sounds", "shotgun.mp3"),
+        }
+        for key, path in sound_files.items():
+            if os.path.exists(path):
+                snd = self.pygame.mixer.Sound(path)
+                snd.set_volume(0.8)
+                self.sounds[key] = snd
+
+    def play_bgm(self, key):
+        if not self.enabled:
+            return
+        if self.last_bgm == key:
+            return
+        path = self.music_files.get(key)
+        if not path or not os.path.exists(path):
+            return
+        self.pygame.mixer.music.load(path)
+        self.pygame.mixer.music.set_volume(0.6)
+        self.pygame.mixer.music.play(-1)
+        self.last_bgm = key
+
+    def pause_bgm(self):
+        if not self.enabled:
+            return
+        try:
+            self.pygame.mixer.music.pause()
+        except Exception:
+            pass
+
+    def resume_bgm(self):
+        if not self.enabled:
+            return
+        try:
+            self.pygame.mixer.music.unpause()
+        except Exception:
+            pass
+
+    def stop_bgm(self):
+        if not self.enabled:
+            return
+        try:
+            self.pygame.mixer.music.stop()
+        except Exception:
+            pass
+        self.last_bgm = None
+
+    def play_weapon(self, weapon_type):
+        if not self.enabled:
+            return
+        now = time.time()
+        cooldown = self.weapon_cooldown.get(weapon_type, 0.05)
+        last_time = self.last_weapon_times.get(weapon_type, 0.0)
+        if cooldown > 0 and now - last_time < cooldown:
+            return
+        key = self.weapon_map.get(weapon_type)
+        if key and key in self.sounds:
+            self.sounds[key].play()
+            self.last_weapon_times[weapon_type] = now
+
+audio = AudioManager(ASSET_DIR)
 
 def apply_fog_color(base_c, obj_x, obj_z):
     dist = math.sqrt((obj_x - state.player_x)**2 + (obj_z - state.player_z)**2)
@@ -935,7 +1042,7 @@ class Batman(Enemies):
 class Mahoraga(Enemies):
     def __init__(self):
         super().__init__(0.0, 0.0, 0.0)
-        self.hp = self.max_hp = 4000.0
+        self.hp = self.max_hp = 1000.0
         self.phase = 1 
         self.walk_anim_time = 0.0
         self.attack_rate = 2.5
@@ -1151,6 +1258,7 @@ class Mahoraga(Enemies):
 
 class GameState:
     def __init__(self):
+        self.intro_seen = False
         self.last_time = time.time()
         self.quadric = None
         self.init_all()
@@ -1181,6 +1289,13 @@ class GameState:
         self.sway_x, self.sway_y = 0.0, 0.0
         self.muzzle_flash = 0.0
         self.boss_aoe = []
+
+        self.paused = False
+        self.show_intro = not self.intro_seen
+        self.intro_timer = 0.0
+        self.intro_duration = 4.0
+        self.mouse_sensitivity = 0.15
+        self.mouse_warping = False
         
         self.environment = Environment(self.room)
         self.player_x, self.player_y, self.player_z = 0.0, 1.6, self.environment.depth / 2 - 5
@@ -1200,6 +1315,22 @@ class GameState:
         self.max_ammo = WEAPONS[self.current_weapon]["max_ammo"]
         self.ammo = self.max_ammo
         self.is_reloading = False
+
+    def start_reload(self):
+        if not self.is_reloading and self.ammo < self.max_ammo and not self.environment.held_object:
+            self.is_reloading, self.reload_timer = True, 1.0
+
+    def update_bgm(self):
+        if self.room == 3:
+            audio.play_bgm("boss")
+        else:
+            audio.play_bgm("level")
+
+    def end_intro(self):
+        self.show_intro = False
+        self.intro_seen = True
+        self.intro_timer = 0.0
+        self.update_bgm()
         
     def init_dust(self):
         self.ambient_dust = [{'x': random.uniform(-self.environment.width/2, self.environment.width/2), 
@@ -1231,12 +1362,15 @@ class GameState:
             self.max_waves_current, self.enemies_to_spawn = 1, 0
             self.boss = Mahoraga() 
 
+        if not self.show_intro:
+            self.update_bgm()
+
     def restart_game(self):
         self.init_all()
         if self.room == 1: self.load_room(1)
             
     def trigger_attack(self):
-        if self.game_over or self.game_won or self.room_cleared: return
+        if self.game_over or self.game_won or self.room_cleared or self.paused or self.show_intro: return
         if self.environment.held_object:
             if self.melee_cooldown <= 0:
                 self.melee_timer, self.melee_cooldown = 0.25, 0.5
@@ -1273,6 +1407,8 @@ class GameState:
         self.player_pitch += 4.0
         self.screen_shake += 0.15 
         self.muzzle_flash = 0.05 # Activate muzzle flash
+
+        audio.play_weapon(self.current_weapon)
         
         wep = WEAPONS[self.current_weapon]
         base_vx = math.sin(math.radians(self.player_yaw)) * math.cos(math.radians(self.player_pitch))
@@ -1361,24 +1497,51 @@ def draw_crosshair():
         
     glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
 
+def draw_centered_text(lines, start_y, color, font, line_gap):
+    glColor3f(*color)
+    y = start_y
+    for line in lines:
+        text_width = 0
+        for c in line:
+            text_width += glutBitmapWidth(font, ord(c))
+        glRasterPos2f((W_WIDTH - text_width) // 2, y)
+        for c in line:
+            glutBitmapCharacter(font, ord(c))
+        y -= line_gap
+
+def draw_intro():
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0, W_WIDTH, 0, W_HEIGHT)
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
+
+    t = state.intro_timer
+    fade_time = 1.0
+    if t < fade_time:
+        fade = t / fade_time
+    elif t > state.intro_duration - fade_time:
+        fade = max(0.0, (state.intro_duration - t) / fade_time)
+    else:
+        fade = 1.0
+
+    title_col = (fade, fade, fade)
+    hint_col = (fade * 0.6, fade * 0.6, fade * 0.6)
+    draw_centered_text([INTRO_TITLE], W_HEIGHT // 2 + 20, title_col, GLUT_BITMAP_TIMES_ROMAN_24, 28)
+    draw_centered_text(["Press any key to start"], W_HEIGHT // 2 - 20, hint_col, GLUT_BITMAP_HELVETICA_18, 22)
+
+    glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
+
 def draw_ui():
     glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity(); gluOrtho2D(0,W_WIDTH,0,W_HEIGHT)
     glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
     
     if state.game_over:
-        glColor3f(1.0, 0.0, 0.0)
-        glRasterPos2f(W_WIDTH//2 - 60, W_HEIGHT//2)
-        for c in "GAME OVER": glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(c))
-        glColor3f(0.9, 0.9, 0.9) 
-        glRasterPos2f(W_WIDTH//2 - 90, W_HEIGHT//2 - 30)
-        for c in "PRESS ENTER TO RESTART": glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(c))
+        draw_centered_text(["WE LOST"], W_HEIGHT // 2 + 90, (1.0, 0.0, 0.0), GLUT_BITMAP_TIMES_ROMAN_24, 30)
+        draw_centered_text(THANKS_LINES, W_HEIGHT // 2 + 40, (1.0, 1.0, 1.0), GLUT_BITMAP_HELVETICA_18, 26)
+        draw_centered_text(["PRESS ENTER TO RESTART"], W_HEIGHT // 2 - 40, (0.9, 0.9, 0.9), GLUT_BITMAP_HELVETICA_18, 22)
     elif state.game_won:
-        glColor3f(1.0, 0.8, 0.0)
-        glRasterPos2f(W_WIDTH//2 - 60, W_HEIGHT//2)
-        for c in "YOU SURVIVED!": glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(c))
-        glColor3f(0.9, 0.9, 0.9)
-        glRasterPos2f(W_WIDTH//2 - 90, W_HEIGHT//2 - 30)
-        for c in "PRESS ENTER TO RESTART": glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(c))
+        draw_centered_text(["YOU HAVE CONQUERED"], W_HEIGHT // 2 + 90, (1.0, 0.0, 0.0), GLUT_BITMAP_TIMES_ROMAN_24, 30)
+        draw_centered_text(THANKS_LINES, W_HEIGHT // 2 + 40, (1.0, 1.0, 1.0), GLUT_BITMAP_HELVETICA_18, 26)
+        draw_centered_text(["PRESS ENTER TO RESTART"], W_HEIGHT // 2 - 40, (0.9, 0.9, 0.9), GLUT_BITMAP_HELVETICA_18, 22)
     elif state.room_cleared:
         glColor3f(0.0, 1.0, 0.0)
         glRasterPos2f(W_WIDTH//2 - 120, W_HEIGHT//2)
@@ -1411,7 +1574,7 @@ def draw_ui():
 
     glColor3f(0.9, 0.9, 0.9)
     if state.environment.held_object:
-        ammo_txt = f"HELD: {state.environment.held_object.obj_type.upper()} | L-CLICK: MELEE | R-CLICK: THROW"
+        ammo_txt = f"HELD: {state.environment.held_object.obj_type.upper()} | LMB: ATTACK | RMB: THROW"
     else:
         weps = []
         for i, w in enumerate(["HANDGUN", "SMG", "SHOTGUN"]):
@@ -1437,6 +1600,15 @@ def draw_ui():
                 glVertex3f(i*5, i*5, 0); glVertex3f(i*5, W_HEIGHT-i*5, 0)
                 glVertex3f(W_WIDTH-i*5, i*5, 0); glVertex3f(W_WIDTH-i*5, W_HEIGHT-i*5, 0)
         glEnd()
+
+    if state.paused and not state.game_over and not state.game_won:
+        glColor3f(0.0, 0.0, 0.0)
+        glBegin(GL_QUADS)
+        glVertex3f(0, 0, -1.0); glVertex3f(W_WIDTH, 0, -1.0)
+        glVertex3f(W_WIDTH, W_HEIGHT, -1.0); glVertex3f(0, W_HEIGHT, -1.0)
+        glEnd()
+        draw_centered_text(["PAUSED"], W_HEIGHT // 2 + 60, (1.0, 1.0, 1.0), GLUT_BITMAP_TIMES_ROMAN_24, 28)
+        draw_centered_text(["Resume: ESC or C", "Restart: R", "Quit: Q"], W_HEIGHT // 2 + 10, (0.9, 0.9, 0.9), GLUT_BITMAP_HELVETICA_18, 24)
     
     glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
 
@@ -1463,7 +1635,7 @@ def spawn_wall_hit_particles(x, y, z):
     ])
 
 def update_player(dt):
-    if state.game_over: return
+    if state.game_over or state.game_won or state.paused or state.show_intro: return
     
     # WEAPON SWAY UPDATE LOGIC
     delta_yaw = state.player_yaw - state.prev_yaw
@@ -1526,10 +1698,12 @@ def update_player(dt):
     state.player_x = max(-hw, min(hw, state.player_x))
     state.player_z = max(-hd, min(hd, state.player_z))
 
-    if state.hp <= 0: state.game_over = True
+    if state.hp <= 0 and not state.game_over:
+        state.game_over = True
+        audio.stop_bgm()
 
 def update(dt):
-    if state.game_over: return
+    if state.game_over or state.game_won or state.paused or state.show_intro: return
 
     update_player(dt)
     state.environment.update_objects(dt)
@@ -1552,6 +1726,7 @@ def update(dt):
         state.boss.update(dt)
         if state.boss.hp <= 0: 
             state.game_won = True
+            audio.stop_bgm()
             state.boss.phase = 4 
             for _ in range(10):
                 spawn_blood_explosion(state.boss.x + random.uniform(-2, 2), state.boss.y + random.uniform(0, 4), state.boss.z + random.uniform(-2, 2))
@@ -1686,6 +1861,11 @@ def update(dt):
     state.enemies = [e for e in state.enemies if e.alive]
 
 def display():
+    if state.show_intro:
+        draw_intro()
+        glutSwapBuffers()
+        return
+
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
     
     sx = random.uniform(-state.screen_shake, state.screen_shake) * 0.5
@@ -1757,13 +1937,55 @@ def idle():
     ct = time.time()
     dt = min(ct-state.last_time, 0.1)
     state.last_time = ct
-    
-    update(dt)
+
+    if state.show_intro:
+        state.intro_timer += dt
+        if state.intro_timer >= state.intro_duration:
+            state.end_intro()
+    else:
+        update(dt)
     
     glutPostRedisplay()
 
+def close_game():
+    try:
+        glutLeaveMainLoop()
+    except Exception:
+        sys.exit(0)
+
 def keyboard(key, x, y):
     k = key.lower() if isinstance(key, bytes) else key
+    if state.show_intro:
+        state.end_intro()
+        return
+    if k == b'\x1b':
+        if state.game_over or state.game_won:
+            return
+        state.paused = not state.paused
+        if state.paused:
+            state.keys.clear()
+            audio.pause_bgm()
+        else:
+            try:
+                state.mouse_warping = True
+                glutWarpPointer(W_WIDTH // 2, W_HEIGHT // 2)
+            except: pass
+            audio.resume_bgm()
+        return
+    if state.paused:
+        if k == b'c':
+            state.paused = False
+            try:
+                state.mouse_warping = True
+                glutWarpPointer(W_WIDTH // 2, W_HEIGHT // 2)
+            except: pass
+            audio.resume_bgm()
+        elif k == b'r':
+            state.restart_game()
+        elif k == b'q':
+            close_game()
+        return
+
     if k == b' ': state.trigger_attack()
     if k == b'e': state.environment.pickup_object(state.player_x, state.player_z)
     if k == b'f': state.environment.throw_held_object(state.player_x, state.player_y, state.player_z, state.player_yaw, state.player_pitch)
@@ -1774,10 +1996,8 @@ def keyboard(key, x, y):
     if k == b'3' and "SHOTGUN" in state.unlocked_weapons: state.equip_weapon("SHOTGUN")
         
     if k in (b'w', b'a', b's', b'd'): state.keys[k.decode()] = True
-    if k == b'\x1b': sys.exit(0)
     if k == b'r':
-        if not state.is_reloading and state.ammo < state.max_ammo and not state.environment.held_object:
-            state.is_reloading, state.reload_timer = True, 1.0
+        state.start_reload()
     if k == b'x' and state.dash_cooldown <= 0 and not state.is_dashing:
         state.is_dashing, state.dash_timer, state.dash_cooldown = True, 0.2, 2.0
         state.dash_dir_x, state.dash_dir_z = math.sin(math.radians(state.player_yaw)), -math.cos(math.radians(state.player_yaw))
@@ -1787,24 +2007,57 @@ def keyboard(key, x, y):
 
 def keyboard_up(key, x, y):
     k = key.lower() if isinstance(key, bytes) else key
+    if state.paused or state.show_intro:
+        return
     if k in (b'w', b'a', b's', b'd'): state.keys[k.decode()] = False
 
 def special_key(key, x, y):
+    if state.paused or state.show_intro:
+        return
     if key == GLUT_KEY_UP:    state.keys['up'] = True
     if key == GLUT_KEY_DOWN:  state.keys['down'] = True
     if key == GLUT_KEY_LEFT:  state.keys['left'] = True
     if key == GLUT_KEY_RIGHT: state.keys['right'] = True
 
 def special_key_up(key, x, y):
+    if state.paused or state.show_intro:
+        return
     if key == GLUT_KEY_UP:    state.keys['up'] = False
     if key == GLUT_KEY_DOWN:  state.keys['down'] = False
     if key == GLUT_KEY_LEFT:  state.keys['left'] = False
     if key == GLUT_KEY_RIGHT: state.keys['right'] = False
 
+def mouse_motion(x, y):
+    if state.show_intro:
+        return
+    if state.paused or state.game_over or state.game_won:
+        return
+    if state.mouse_warping:
+        state.mouse_warping = False
+        return
+
+    cx, cy = W_WIDTH // 2, W_HEIGHT // 2
+    dx, dy = x - cx, y - cy
+    state.player_yaw += dx * state.mouse_sensitivity
+    state.player_pitch -= dy * state.mouse_sensitivity
+    state.player_pitch = max(-60.0, min(60.0, state.player_pitch))
+
+    state.mouse_warping = True
+    glutWarpPointer(cx, cy)
+
 def mouse_func(button, btn_state, x, y):
-    if button == GLUT_LEFT_BUTTON and btn_state == GLUT_DOWN: state.trigger_attack()
-    if button == GLUT_RIGHT_BUTTON and btn_state == GLUT_DOWN and state.environment.held_object:
-        state.environment.throw_held_object(state.player_x, state.player_y, state.player_z, state.player_yaw, state.player_pitch)
+    if state.show_intro:
+        state.end_intro()
+        return
+    if state.paused:
+        return
+    if button == GLUT_LEFT_BUTTON and btn_state == GLUT_DOWN:
+        state.trigger_attack()
+    if button == GLUT_RIGHT_BUTTON and btn_state == GLUT_DOWN:
+        if state.environment.held_object:
+            state.environment.throw_held_object(state.player_x, state.player_y, state.player_z, state.player_yaw, state.player_pitch)
+        else:
+            state.start_reload()
 
 if __name__ == "__main__":
     glutInit(sys.argv)
@@ -1818,9 +2071,16 @@ if __name__ == "__main__":
     glutKeyboardFunc(keyboard)
     glutSpecialFunc(special_key)
     glutMouseFunc(mouse_func)
+    glutPassiveMotionFunc(mouse_motion)
+    glutMotionFunc(mouse_motion)
     try:
         glutKeyboardUpFunc(keyboard_up)
         glutSpecialUpFunc(special_key_up)
+    except: pass
+    try:
+        glutSetCursor(GLUT_CURSOR_NONE)
+        state.mouse_warping = True
+        glutWarpPointer(W_WIDTH // 2, W_HEIGHT // 2)
     except: pass
     state.load_room(1)
     glutMainLoop()
